@@ -6,6 +6,7 @@ import java.util.List;
 
 public final class PluginLock {
     private int lockfileVersion = 1;
+    private LockedServer server;
     private String minecraftVersion;
     private String loader;
     private String generatedAt = Instant.now().toString();
@@ -17,6 +18,14 @@ public final class PluginLock {
 
     public void setLockfileVersion(int lockfileVersion) {
         this.lockfileVersion = lockfileVersion;
+    }
+
+    public LockedServer getServer() {
+        return server;
+    }
+
+    public void setServer(LockedServer server) {
+        this.server = server;
     }
 
     public String getMinecraftVersion() {

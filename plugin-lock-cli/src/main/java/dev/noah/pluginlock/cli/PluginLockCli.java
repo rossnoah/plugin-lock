@@ -4,6 +4,7 @@ import dev.noah.pluginlock.core.PluginInstaller;
 import dev.noah.pluginlock.core.PluginLockFiles;
 import dev.noah.pluginlock.core.PluginResolver;
 import dev.noah.pluginlock.core.model.LockedPlugin;
+import dev.noah.pluginlock.core.model.LockedServer;
 import dev.noah.pluginlock.core.model.PluginLock;
 import dev.noah.pluginlock.core.model.PluginManifest;
 import dev.noah.pluginlock.core.model.PluginMetadata;
@@ -19,9 +20,7 @@ import picocli.CommandLine.ParseResult;
 import picocli.CommandLine.Parameters;
 
 import java.io.Console;
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.net.http.HttpClient;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -45,11 +44,23 @@ import java.util.concurrent.Callable;
         }
 )
 public final class PluginLockCli implements Callable<Integer> {
+    private static final String DEFAULT_MINECRAFT_VERSION = "1.21.4";
+    private static final String DEFAULT_LOADER = "paper";
+
     @Option(names = "--project-dir", defaultValue = ".", description = "Directory containing plugin-lock files.")
     Path projectDir;
     private Path effectiveProjectDir;
     private final ModrinthProvider modrinthProvider = new ModrinthProvider(HttpClient.newHttpClient());
     private final HangarProvider hangarProvider = new HangarProvider(HttpClient.newHttpClient());
+    private final ServerDownloads serverDownloads;
+
+    public PluginLockCli() {
+        this(new ServerDownloads(HttpClient.newHttpClient()));
+    }
+
+    PluginLockCli(ServerDownloads serverDownloads) {
+        this.serverDownloads = serverDownloads;
+    }
 
     public static void main(String[] args) {
         int exitCode = commandLine(new PluginLockCli()).execute(args);
@@ -114,6 +125,10 @@ public final class PluginLockCli implements Callable<Integer> {
 
     PluginLock resolveAndWriteLock(PluginManifest manifest) throws Exception {
         PluginLock lock = new PluginResolver().resolve(manifest);
+        Path lockPath = resolve(PluginLockFiles.LOCK_FILE);
+        if (Files.exists(lockPath)) {
+            lock.setServer(PluginLockFiles.readLock(lockPath).getServer());
+        }
         PluginLockFiles.writeLock(resolve(PluginLockFiles.LOCK_FILE), lock);
         return lock;
     }
@@ -252,9 +267,17 @@ public final class PluginLockCli implements Callable<Integer> {
         }
         System.out.print(prompt);
         try {
-            BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
-            String answer = reader.readLine();
-            return answer == null ? "" : answer.trim();
+            StringBuilder answer = new StringBuilder();
+            while (true) {
+                int next = System.in.read();
+                if (next == -1 || next == '\n') {
+                    break;
+                }
+                if (next != '\r') {
+                    answer.append((char) next);
+                }
+            }
+            return answer.toString().trim();
         } catch (Exception exception) {
             return "";
         }
@@ -265,11 +288,14 @@ public final class PluginLockCli implements Callable<Integer> {
         @ParentCommand
         PluginLockCli parent;
 
-        @Option(names = "--minecraft", defaultValue = "1.21.4", description = "Minecraft version.")
+        @Option(names = "--minecraft", description = "Minecraft version.")
         String minecraftVersion;
 
-        @Option(names = "--loader", defaultValue = "paper", description = "Server loader, for example paper.")
-        String loader;
+        @Option(names = "--server", description = "Server provider: paper or purpur.")
+        String server;
+
+        @Option(names = {"-y", "--yes"}, description = "Accept detected/default values without prompting.")
+        boolean yes;
 
         @Override
         public Integer call() throws Exception {
@@ -277,13 +303,85 @@ public final class PluginLockCli implements Callable<Integer> {
             if (Files.exists(manifestPath)) {
                 throw new IllegalStateException(PluginLockFiles.MANIFEST_FILE + " already exists");
             }
+            String resolvedServer = chooseServer(server, DEFAULT_LOADER, yes);
+            List<String> versions = parent.serverDownloads.versions(resolvedServer);
+            String resolvedMinecraftVersion = chooseMinecraftVersion(minecraftVersion, versions, yes);
+            LockedServer lockedServer = parent.serverDownloads.latest(resolvedServer, resolvedMinecraftVersion);
+            Path serverJar = parent.serverDownloads.download(lockedServer, parent.effectiveProjectDir());
+
             PluginManifest manifest = new PluginManifest();
-            manifest.setMinecraftVersion(minecraftVersion);
-            manifest.setLoader(loader);
+            manifest.setMinecraftVersion(resolvedMinecraftVersion);
+            manifest.setLoader(ServerDownloads.pluginLoaderFor(resolvedServer));
             PluginLockFiles.writeManifest(manifestPath, manifest);
+
+            PluginLock lock = new PluginLock();
+            lock.setMinecraftVersion(manifest.getMinecraftVersion());
+            lock.setLoader(manifest.getLoader());
+            lock.setServer(lockedServer);
+            PluginLockFiles.writeLock(parent.resolve(PluginLockFiles.LOCK_FILE), lock);
+
             System.out.println("Created " + PluginLockFiles.MANIFEST_FILE);
+            System.out.println("Created " + PluginLockFiles.LOCK_FILE);
+            System.out.println("Downloaded " + serverJar.getFileName());
+            System.out.println("Server: " + lockedServer.getProvider() + " build " + lockedServer.getBuild());
+            System.out.println("Minecraft: " + manifest.getMinecraftVersion());
+            System.out.println("Loader: " + manifest.getLoader());
             return 0;
         }
+    }
+
+    private static String chooseServer(String explicit, String fallback, boolean assumeYes) {
+        if (explicit != null && !explicit.isBlank()) {
+            return explicit.trim().toLowerCase(Locale.ROOT);
+        }
+        if (assumeYes) {
+            return fallback;
+        }
+        System.out.println();
+        System.out.println("Server software:");
+        System.out.println("1. paper (default)");
+        System.out.println("2. purpur");
+        String answer = readConfirmation("Select server [1]: ");
+        if ("2".equals(answer) || "purpur".equalsIgnoreCase(answer)) {
+            return "purpur";
+        }
+        return fallback;
+    }
+
+    private static String chooseMinecraftVersion(String explicit, List<String> versions, boolean assumeYes) {
+        if (explicit != null && !explicit.isBlank()) {
+            return explicit.trim();
+        }
+        if (versions.isEmpty()) {
+            return DEFAULT_MINECRAFT_VERSION;
+        }
+        if (assumeYes) {
+            return versions.getFirst();
+        }
+        System.out.println();
+        System.out.println("Minecraft versions:");
+        int limit = Math.min(10, versions.size());
+        for (int index = 0; index < limit; index++) {
+            System.out.println((index + 1) + ". " + versions.get(index) + (index == 0 ? " (default)" : ""));
+        }
+        String answer = readConfirmation("Select Minecraft version [1]: ");
+        if (answer.isBlank()) {
+            return versions.getFirst();
+        }
+        try {
+            int selected = Integer.parseInt(answer);
+            if (selected >= 1 && selected <= limit) {
+                return versions.get(selected - 1);
+            }
+        } catch (NumberFormatException ignored) {
+            for (String version : versions) {
+                if (version.equalsIgnoreCase(answer)) {
+                    return version;
+                }
+            }
+        }
+        System.out.println("Invalid selection; using " + versions.getFirst());
+        return versions.getFirst();
     }
 
     @Command(name = "add", mixinStandardHelpOptions = true, description = "Add a plugin request to the manifest.")

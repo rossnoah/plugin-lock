@@ -21,14 +21,15 @@ Make sure `~/.local/bin` is on your `PATH`, then create a plugin manifest in you
 
 ```sh
 cd /path/to/server
-pl init --minecraft 1.21.4 --loader paper
+pl init
 pl install luckperms
 ```
 
 This creates:
 
 - `plugin-lock.json`: the editable manifest.
-- `plugin-lock.lock.json`: exact resolved plugin artifacts.
+- `plugin-lock.lock.json`: selected server build plus exact resolved plugin artifacts.
+- `paper-*.jar` or `purpur-*.jar`: the selected server jar downloaded during init.
 - `plugins/*.jar`: downloaded plugin jars verified with SHA-512.
 
 For repeatable installs from an existing lockfile:
@@ -41,11 +42,16 @@ pl ci
 
 ### `pl init`
 
-Create a new `plugin-lock.json`.
+Create a new `plugin-lock.json` and a starter `plugin-lock.lock.json`.
 
 ```sh
-pl init --minecraft 1.21.4 --loader paper
+pl init
+pl init --server paper --minecraft 1.21.4
+pl init --server purpur
+pl init --yes
 ```
+
+`pl init` fetches available Paper and Purpur server versions from their downloads APIs, lets you choose the server software and Minecraft version, downloads the selected server jar, then records the selected server build in `plugin-lock.lock.json`. Paper downloads are verified with the API-provided SHA-256. Use `--yes` to accept the latest Paper build without prompts.
 
 ### `pl install` / `pl i`
 

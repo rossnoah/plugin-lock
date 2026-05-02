@@ -1,5 +1,7 @@
 package dev.noah.pluginlock.core;
 
+import dev.noah.pluginlock.core.model.LockedServer;
+import dev.noah.pluginlock.core.model.PluginLock;
 import dev.noah.pluginlock.core.model.PluginManifest;
 import dev.noah.pluginlock.core.model.PluginRequest;
 import org.junit.jupiter.api.Test;
@@ -47,5 +49,30 @@ class PluginLockFilesTest {
         assertEquals("1.21.4", manifest.getMinecraftVersion());
         assertEquals("paper", manifest.getLoader());
         assertEquals("modrinth", manifest.getPlugins().getFirst().getProvider());
+    }
+
+    @Test
+    void roundTripsLockWithServerSelection() throws Exception {
+        LockedServer server = new LockedServer();
+        server.setProvider("paper");
+        server.setMinecraftVersion("1.21.11");
+        server.setBuild("130");
+        server.setFileName("paper-1.21.11-130.jar");
+        server.setDownloadUrl("https://example.test/paper.jar");
+        server.setSha256("abc123");
+        server.setSize(123);
+        PluginLock lock = new PluginLock();
+        lock.setMinecraftVersion("1.21.11");
+        lock.setLoader("paper");
+        lock.setServer(server);
+
+        Path path = tempDir.resolve(PluginLockFiles.LOCK_FILE);
+        PluginLockFiles.writeLock(path, lock);
+        PluginLock restored = PluginLockFiles.readLock(path);
+
+        assertEquals("paper", restored.getServer().getProvider());
+        assertEquals("1.21.11", restored.getServer().getMinecraftVersion());
+        assertEquals("130", restored.getServer().getBuild());
+        assertEquals("abc123", restored.getServer().getSha256());
     }
 }
