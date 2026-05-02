@@ -97,6 +97,61 @@ class HangarProviderIntegrationTest {
     }
 
     @Test
+    void skipsCompatibleVersionWithoutPlatformDownloadAgainstFakeApi() throws Exception {
+        try (TestHttpServer server = new TestHttpServer()) {
+            server.json("/projects/Owner/Demo", projectJson("Owner", "Demo", "Demo Plugin"));
+            server.json("/projects/Owner/Demo/versions?limit=100", """
+                    {
+                      "pagination":{"count":2,"limit":100,"offset":0},
+                      "result":[
+                        {
+                          "name":"2.0.0",
+                          "downloads":{"PAPER":{"fileInfo":null,"externalUrl":"https://example.test/releases","downloadUrl":null}},
+                          "platformDependencies":{"PAPER":["1.21.4"]}
+                        },
+                        {
+                          "name":"1.0.0",
+                          "downloads":{"PAPER":{"fileInfo":{"name":"paper.jar","sizeBytes":1,"sha256Hash":"paper"},"downloadUrl":"https://example.test/paper.jar"}},
+                          "platformDependencies":{"PAPER":["1.21.4"]}
+                        }
+                      ]
+                    }
+                    """);
+
+            LockedPlugin plugin = new HangarProvider(HttpClient.newHttpClient(), server.baseUri())
+                    .resolve(new PluginRequest("Owner/Demo", "hangar", "latest"), "1.21.4", "paper");
+
+            assertEquals("1.0.0", plugin.getVersionName());
+            assertEquals("paper.jar", plugin.getFileName());
+        }
+    }
+
+    @Test
+    void reportsExternalDownloadWhenNoDirectDownloadExistsAgainstFakeApi() throws Exception {
+        try (TestHttpServer server = new TestHttpServer()) {
+            server.json("/projects/Owner/Demo", projectJson("Owner", "Demo", "Demo Plugin"));
+            server.json("/projects/Owner/Demo/versions?limit=100", """
+                    {
+                      "pagination":{"count":1,"limit":100,"offset":0},
+                      "result":[{
+                        "name":"2.0.0",
+                        "downloads":{"PAPER":{"fileInfo":null,"externalUrl":"https://example.test/releases","downloadUrl":null}},
+                        "platformDependencies":{"PAPER":["1.21.4"]}
+                      }]
+                    }
+                    """);
+
+            IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () ->
+                    new HangarProvider(HttpClient.newHttpClient(), server.baseUri())
+                            .resolve(new PluginRequest("Owner/Demo", "hangar", "latest"), "1.21.4", "paper"));
+
+            assertTrue(exception.getMessage().contains("Owner/Demo"));
+            assertTrue(exception.getMessage().contains("uses an external download"));
+            assertTrue(exception.getMessage().contains("https://example.test/releases"));
+        }
+    }
+
+    @Test
     void reportsMissingCompatibleVersionsAgainstFakeApi() throws Exception {
         try (TestHttpServer server = new TestHttpServer()) {
             server.json("/projects/Owner/Demo", projectJson("Owner", "Demo", "Demo Plugin"));
@@ -106,7 +161,7 @@ class HangarProviderIntegrationTest {
                       "result":[{
                         "name":"1.0.0",
                         "downloads":{"PAPER":{"fileInfo":{"name":"Demo.jar","sizeBytes":1,"sha256Hash":"hash"},"downloadUrl":"https://example.test/Demo.jar"}},
-                        "platformDependencies":{"PAPER":["1.20.4"]}
+                        "platformDependencies":{"PAPER":["1.21.5"]}
                       }]
                     }
                     """);
@@ -115,7 +170,53 @@ class HangarProviderIntegrationTest {
                     new HangarProvider(HttpClient.newHttpClient(), server.baseUri())
                             .resolve(new PluginRequest("Owner/Demo", "hangar", "latest"), "1.21.4", "paper"));
 
-            assertTrue(exception.getMessage().contains("No compatible Hangar versions"));
+            assertTrue(exception.getMessage().contains("do not list a compatible Minecraft version"));
+        }
+    }
+
+    @Test
+    void resolvesOlderVersionOnNewerServerWithWarningAgainstFakeApi() throws Exception {
+        try (TestHttpServer server = new TestHttpServer()) {
+            server.json("/projects/Owner/Demo", projectJson("Owner", "Demo", "Demo Plugin"));
+            server.json("/projects/Owner/Demo/versions?limit=100", """
+                    {
+                      "pagination":{"count":1,"limit":100,"offset":0},
+                      "result":[{
+                        "name":"1.0.0",
+                        "downloads":{"PAPER":{"fileInfo":{"name":"Demo.jar","sizeBytes":1,"sha256Hash":"hash"},"downloadUrl":"https://example.test/Demo.jar"}},
+                        "platformDependencies":{"PAPER":["1.21.1"]}
+                      }]
+                    }
+                    """);
+
+            LockedPlugin plugin = new HangarProvider(HttpClient.newHttpClient(), server.baseUri())
+                    .resolve(new PluginRequest("Owner/Demo", "hangar", "latest"), "1.21.4", "paper");
+
+            assertEquals("1.0.0", plugin.getVersionName());
+            assertTrue(plugin.getCompatibilityWarning().contains("does not explicitly list Minecraft 1.21.4"));
+        }
+    }
+
+    @Test
+    void doesNotCrossMinecraft113BoundaryAgainstFakeApi() throws Exception {
+        try (TestHttpServer server = new TestHttpServer()) {
+            server.json("/projects/Owner/Demo", projectJson("Owner", "Demo", "Demo Plugin"));
+            server.json("/projects/Owner/Demo/versions?limit=100", """
+                    {
+                      "pagination":{"count":1,"limit":100,"offset":0},
+                      "result":[{
+                        "name":"1.0.0",
+                        "downloads":{"PAPER":{"fileInfo":{"name":"Demo.jar","sizeBytes":1,"sha256Hash":"hash"},"downloadUrl":"https://example.test/Demo.jar"}},
+                        "platformDependencies":{"PAPER":["1.12.2"]}
+                      }]
+                    }
+                    """);
+
+            IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () ->
+                    new HangarProvider(HttpClient.newHttpClient(), server.baseUri())
+                            .resolve(new PluginRequest("Owner/Demo", "hangar", "latest"), "1.13", "paper"));
+
+            assertTrue(exception.getMessage().contains("do not list a compatible Minecraft version"));
         }
     }
 

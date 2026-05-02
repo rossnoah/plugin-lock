@@ -1,5 +1,7 @@
 package dev.noah.pluginlock.core.model;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+
 public final class LockedPlugin {
     private String id;
     private String name;
@@ -11,6 +13,8 @@ public final class LockedPlugin {
     private String downloadUrl;
     private String sha512;
     private String sha256;
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private String compatibilityWarning;
     private long size;
 
     public String getId() {
@@ -91,6 +95,14 @@ public final class LockedPlugin {
 
     public void setSha256(String sha256) {
         this.sha256 = sha256;
+    }
+
+    public String getCompatibilityWarning() {
+        return compatibilityWarning;
+    }
+
+    public void setCompatibilityWarning(String compatibilityWarning) {
+        this.compatibilityWarning = compatibilityWarning;
     }
 
     public long getSize() {

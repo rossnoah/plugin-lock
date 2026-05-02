@@ -36,11 +36,11 @@ public final class ModrinthProvider {
     public LockedPlugin resolve(PluginRequest request, String minecraftVersion, String loader)
             throws IOException, InterruptedException {
         JsonNode project = get("project/" + segment(request.getId()), request.getId());
+        ensurePluginProject(project, request.getId());
         JsonNode versions = get("project/" + segment(request.getId()) + "/version"
-                + "?loaders=%5B%22" + query(loader.toLowerCase(Locale.ROOT)) + "%22%5D"
-                + "&game_versions=%5B%22" + query(minecraftVersion) + "%22%5D");
+                + "?loaders=%5B%22" + query(loader.toLowerCase(Locale.ROOT)) + "%22%5D");
 
-        JsonNode selectedVersion = selectVersion(request, versions);
+        JsonNode selectedVersion = selectVersion(request, versions, minecraftVersion);
         JsonNode selectedFile = selectPrimaryFile(selectedVersion);
 
         LockedPlugin locked = new LockedPlugin();
@@ -54,11 +54,13 @@ public final class ModrinthProvider {
         locked.setDownloadUrl(selectedFile.path("url").asText());
         locked.setSha512(selectedFile.path("hashes").path("sha512").asText());
         locked.setSize(selectedFile.path("size").asLong());
+        locked.setCompatibilityWarning(compatibilityWarning(locked.getName(), selectedVersion, minecraftVersion));
         return locked;
     }
 
     public PluginMetadata fetchMetadata(String id) throws IOException, InterruptedException {
         JsonNode project = get("project/" + segment(id), id);
+        ensurePluginProject(project, id);
         PluginMetadata metadata = new PluginMetadata();
         metadata.setId(id);
         metadata.setProvider("modrinth");
@@ -67,6 +69,33 @@ public final class ModrinthProvider {
         metadata.setDownloads(project.path("downloads").asLong());
         metadata.setAuthors(fetchAuthors(project.path("team").asText(null)));
         return metadata;
+    }
+
+    private static void ensurePluginProject(JsonNode project, String id) throws PluginNotFoundException {
+        if (!hasPluginLoader(project)) {
+            throw new PluginNotFoundException("Modrinth plugin catalog", id);
+        }
+    }
+
+    private static boolean hasPluginLoader(JsonNode project) {
+        JsonNode loaders = project.path("loaders");
+        if (!loaders.isArray()) {
+            return "plugin".equals(project.path("project_type").asText(""));
+        }
+        for (JsonNode loaderNode : loaders) {
+            String loader = loaderNode.asText("").toLowerCase(Locale.ROOT);
+            if ("paper".equals(loader)
+                    || "purpur".equals(loader)
+                    || "folia".equals(loader)
+                    || "spigot".equals(loader)
+                    || "bukkit".equals(loader)
+                    || "bungeecord".equals(loader)
+                    || "waterfall".equals(loader)
+                    || "velocity".equals(loader)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private JsonNode get(String path) throws IOException, InterruptedException {
@@ -104,20 +133,51 @@ public final class ModrinthProvider {
         return authors;
     }
 
-    private static JsonNode selectVersion(PluginRequest request, JsonNode versions) {
+    private static JsonNode selectVersion(PluginRequest request, JsonNode versions, String minecraftVersion) {
         if (!versions.isArray() || versions.isEmpty()) {
             throw new IllegalArgumentException("No compatible Modrinth versions found for " + request.getId());
         }
-        if (request.getVersion() == null || request.getVersion().isBlank() || "latest".equals(request.getVersion())) {
-            return versions.get(0);
-        }
         for (JsonNode version : versions) {
-            if (request.getVersion().equals(version.path("version_number").asText())
-                    || request.getVersion().equals(version.path("id").asText())) {
+            if (matchesRequestedVersion(request, version) && supports(version, minecraftVersion)) {
                 return version;
             }
         }
-        throw new IllegalArgumentException("Version " + request.getVersion() + " was not found for " + request.getId());
+        throw new IllegalArgumentException("No compatible Modrinth versions found for " + request.getId());
+    }
+
+    private static boolean matchesRequestedVersion(PluginRequest request, JsonNode version) {
+        return request.getVersion() == null
+                || request.getVersion().isBlank()
+                || "latest".equals(request.getVersion())
+                || request.getVersion().equals(version.path("version_number").asText())
+                || request.getVersion().equals(version.path("id").asText());
+    }
+
+    private static boolean supports(JsonNode version, String minecraftVersion) {
+        JsonNode gameVersions = version.path("game_versions");
+        if (!gameVersions.isArray()) {
+            return false;
+        }
+        for (JsonNode versionNode : gameVersions) {
+            if (MinecraftVersions.supports(versionNode.asText(), minecraftVersion)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String compatibilityWarning(String pluginName, JsonNode version, String minecraftVersion) {
+        JsonNode gameVersions = version.path("game_versions");
+        if (!gameVersions.isArray()) {
+            return null;
+        }
+        for (JsonNode versionNode : gameVersions) {
+            if (MinecraftVersions.isExact(versionNode.asText(), minecraftVersion)) {
+                return null;
+            }
+        }
+        return pluginName + " does not explicitly list Minecraft " + minecraftVersion
+                + "; selected an older compatible release. Check for plugin-specific breaking changes.";
     }
 
     private static JsonNode selectPrimaryFile(JsonNode version) {

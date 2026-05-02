@@ -208,6 +208,30 @@ class PluginLockCliIntegrationTest {
     }
 
     @Test
+    void installDoesNotWriteStagedPluginWhenResolutionFails() throws Exception {
+        PluginManifest manifest = new PluginManifest();
+        manifest.setMinecraftVersion("1.21.4");
+        manifest.setLoader("paper");
+        PluginLockFiles.writeManifest(tempDir.resolve(PluginLockFiles.MANIFEST_FILE), manifest);
+
+        PluginLock lock = new PluginLock();
+        lock.setMinecraftVersion("1.21.4");
+        lock.setLoader("paper");
+        PluginLockFiles.writeLock(tempDir.resolve(PluginLockFiles.LOCK_FILE), lock);
+
+        PluginLockCli cli = new PluginLockCli(new ServerDownloads(HttpClient.newHttpClient()), ignored -> {
+            throw new IllegalArgumentException("resolver failed");
+        });
+
+        CliResult result = executeCapturing(cli, tempDir, "", "install", "broken", "--provider", "modrinth", "--yes");
+
+        assertEquals(1, result.exitCode());
+        assertTrue(result.output().contains("resolver failed"));
+        assertTrue(PluginLockFiles.readManifest(tempDir.resolve(PluginLockFiles.MANIFEST_FILE)).getPlugins().isEmpty());
+        assertTrue(PluginLockFiles.readLock(tempDir.resolve(PluginLockFiles.LOCK_FILE)).getPlugins().isEmpty());
+    }
+
+    @Test
     void cleanInstallAliasReinstallsFromLockfileOnly() throws Exception {
         Path source = tempDir.resolve("source.jar");
         Files.writeString(source, "clean jar body");

@@ -61,13 +61,19 @@ public final class PluginLockCli implements Callable<Integer> {
     private final ModrinthProvider modrinthProvider = new ModrinthProvider(HttpClient.newHttpClient());
     private final HangarProvider hangarProvider = new HangarProvider(HttpClient.newHttpClient());
     private final ServerDownloads serverDownloads;
+    private final LockResolver lockResolver;
 
     public PluginLockCli() {
-        this(new ServerDownloads(HttpClient.newHttpClient()));
+        this(new ServerDownloads(HttpClient.newHttpClient()), new PluginResolver()::resolve);
     }
 
     PluginLockCli(ServerDownloads serverDownloads) {
+        this(serverDownloads, new PluginResolver()::resolve);
+    }
+
+    PluginLockCli(ServerDownloads serverDownloads, LockResolver lockResolver) {
         this.serverDownloads = serverDownloads;
+        this.lockResolver = lockResolver;
     }
 
     public static void main(String[] args) {
@@ -135,13 +141,30 @@ public final class PluginLockCli implements Callable<Integer> {
         PluginLockFiles.writeManifest(resolve(PluginLockFiles.MANIFEST_FILE), manifest);
     }
 
-    PluginLock resolveAndWriteLock(PluginManifest manifest) throws Exception {
-        PluginLock lock = new PluginResolver().resolve(manifest);
+    PluginLock resolveLock(PluginManifest manifest) throws Exception {
+        PluginLock lock = lockResolver.resolve(manifest);
         Path lockPath = resolve(PluginLockFiles.LOCK_FILE);
         if (Files.exists(lockPath)) {
             lock.setServer(PluginLockFiles.readLock(lockPath).getServer());
         }
+        return lock;
+    }
+
+    interface LockResolver {
+        PluginLock resolve(PluginManifest manifest) throws Exception;
+    }
+
+    void writeLock(PluginLock lock) throws Exception {
         PluginLockFiles.writeLock(resolve(PluginLockFiles.LOCK_FILE), lock);
+        lock.getPlugins().stream()
+                .map(LockedPlugin::getCompatibilityWarning)
+                .filter(warning -> warning != null && !warning.isBlank())
+                .forEach(output()::warning);
+    }
+
+    PluginLock resolveAndWriteLock(PluginManifest manifest) throws Exception {
+        PluginLock lock = resolveLock(manifest);
+        writeLock(lock);
         return lock;
     }
 
@@ -495,8 +518,9 @@ public final class PluginLockCli implements Callable<Integer> {
                     }
                     addOrReplace(manifest, request);
                 }
+                lock = parent.resolveLock(manifest);
                 parent.writeManifest(manifest);
-                lock = parent.resolveAndWriteLock(manifest);
+                parent.writeLock(lock);
             } else if (Files.exists(lockfilePath)) {
                 lock = PluginLockFiles.readLock(lockfilePath);
             } else {
@@ -639,6 +663,17 @@ public final class PluginLockCli implements Callable<Integer> {
             if (verbose && details != null && !details.isEmpty()) {
                 details.forEach((key, value) -> System.out.println(Ansi.dim(key + ": " + value)));
             }
+        }
+
+        void warning(String message) {
+            if (json) {
+                writeJson(Map.of(
+                        "status", "warning",
+                        "message", message
+                ));
+                return;
+            }
+            System.err.println(Ansi.yellow("Warning: ") + message);
         }
 
         static void error(boolean json, String message) {

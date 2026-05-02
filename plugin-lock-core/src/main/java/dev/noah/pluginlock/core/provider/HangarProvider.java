@@ -40,7 +40,10 @@ public final class HangarProvider {
         String platform = platform(loader);
         JsonNode download = selectedVersion.path("downloads").path(platform);
         if (download.isMissingNode() || download.path("downloadUrl").asText("").isBlank()) {
-            throw new IllegalArgumentException("Version " + selectedVersion.path("name").asText() + " has no " + platform + " download");
+            throw new IllegalArgumentException("Hangar plugin " + request.getId()
+                    + " version " + selectedVersion.path("name").asText()
+                    + " supports Minecraft " + minecraftVersion
+                    + " but has no " + platform + " download");
         }
 
         LockedPlugin locked = new LockedPlugin();
@@ -54,6 +57,7 @@ public final class HangarProvider {
         locked.setDownloadUrl(download.path("downloadUrl").asText());
         locked.setSha256(download.path("fileInfo").path("sha256Hash").asText());
         locked.setSize(download.path("fileInfo").path("sizeBytes").asLong());
+        locked.setCompatibilityWarning(compatibilityWarning(locked.getName(), selectedVersion, platform, minecraftVersion));
         return locked;
     }
 
@@ -109,15 +113,33 @@ public final class HangarProvider {
             throw new IllegalArgumentException("No Hangar versions found for " + request.getId());
         }
         String platform = platform(loader);
+        boolean foundRequestedVersion = false;
+        boolean foundCompatibleVersion = false;
+        boolean foundMissingDirectDownload = false;
+        String externalDownloadUrl = null;
         for (JsonNode version : versions) {
             if (!matchesRequestedVersion(request, version)) {
                 continue;
             }
-            if (supports(version, platform, minecraftVersion)) {
+            foundRequestedVersion = true;
+            if (!supports(version, platform, minecraftVersion)) {
+                continue;
+            }
+            foundCompatibleVersion = true;
+            if (!hasDownload(version, platform)) {
+                foundMissingDirectDownload = true;
+                if (externalDownloadUrl == null) {
+                    externalDownloadUrl = externalDownloadUrl(version, platform);
+                }
+                continue;
+            }
+            if (supports(version, platform, minecraftVersion) && hasDownload(version, platform)) {
                 return version;
             }
         }
-        throw new IllegalArgumentException("No compatible Hangar versions found for " + request.getId());
+        throw new IllegalArgumentException(hangarResolutionFailure(
+                request, loader, minecraftVersion, platform, foundRequestedVersion,
+                foundCompatibleVersion, foundMissingDirectDownload, externalDownloadUrl));
     }
 
     private static boolean matchesRequestedVersion(PluginRequest request, JsonNode version) {
@@ -127,17 +149,81 @@ public final class HangarProvider {
                 || request.getVersion().equals(version.path("name").asText());
     }
 
+    private static String hangarResolutionFailure(
+            PluginRequest request,
+            String loader,
+            String minecraftVersion,
+            String platform,
+            boolean foundRequestedVersion,
+            boolean foundCompatibleVersion,
+            boolean foundMissingDirectDownload,
+            String externalDownloadUrl) {
+        String target = request.getId() + " on " + loader.toLowerCase(Locale.ROOT) + " Minecraft " + minecraftVersion;
+        if (!foundRequestedVersion && request.getVersion() != null && !request.getVersion().isBlank()
+                && !"latest".equals(request.getVersion())) {
+            return "Hangar plugin " + request.getId() + " has no version named " + request.getVersion();
+        }
+        if (!foundCompatibleVersion) {
+            return "No Hangar version found for " + target + "; candidate versions do not list a compatible Minecraft version";
+        }
+        if (externalDownloadUrl != null && !externalDownloadUrl.isBlank()) {
+            return "Hangar plugin " + request.getId() + " uses an external download for "
+                    + loader.toLowerCase(Locale.ROOT) + " Minecraft " + minecraftVersion + ": " + externalDownloadUrl
+                    + ". plugin-lock needs a direct Hangar-hosted jar URL to install it automatically.";
+        }
+        if (foundMissingDirectDownload) {
+            return "No downloadable Hangar version found for " + target
+                    + "; compatible candidate versions do not provide a direct " + platform + " jar download";
+        }
+        return "No downloadable Hangar version found for " + target;
+    }
+
     private static boolean supports(JsonNode version, String platform, String minecraftVersion) {
         JsonNode platformVersions = version.path("platformDependencies").path(platform);
         if (!platformVersions.isArray()) {
             return false;
         }
         for (JsonNode versionNode : platformVersions) {
-            if (minecraftVersion.equals(versionNode.asText())) {
+            if (MinecraftVersions.supports(versionNode.asText(), minecraftVersion)) {
                 return true;
             }
         }
         return false;
+    }
+
+    private static boolean hasDownload(JsonNode version, String platform) {
+        JsonNode download = version.path("downloads").path(platform);
+        return !download.isMissingNode() && !download.path("downloadUrl").asText("").isBlank();
+    }
+
+    private static String externalDownloadUrl(JsonNode version, String platform) {
+        JsonNode download = version.path("downloads").path(platform);
+        if (download.isMissingNode()) {
+            return null;
+        }
+        String externalUrl = download.path("externalUrl").asText("");
+        return externalUrl.isBlank() ? null : externalUrl;
+    }
+
+    private static boolean supportsExact(JsonNode version, String platform, String minecraftVersion) {
+        JsonNode platformVersions = version.path("platformDependencies").path(platform);
+        if (!platformVersions.isArray()) {
+            return false;
+        }
+        for (JsonNode versionNode : platformVersions) {
+            if (MinecraftVersions.isExact(versionNode.asText(), minecraftVersion)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String compatibilityWarning(String pluginName, JsonNode version, String platform, String minecraftVersion) {
+        if (supportsExact(version, platform, minecraftVersion)) {
+            return null;
+        }
+        return pluginName + " does not explicitly list Minecraft " + minecraftVersion
+                + "; selected an older compatible release. Check for plugin-specific breaking changes.";
     }
 
     private static List<String> memberNames(JsonNode project) {
