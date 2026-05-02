@@ -10,6 +10,7 @@ public final class LockedPlugin {
     private String fileName;
     private String downloadUrl;
     private String sha512;
+    private String sha256;
     private long size;
 
     public String getId() {
@@ -82,6 +83,14 @@ public final class LockedPlugin {
 
     public void setSha512(String sha512) {
         this.sha512 = sha512;
+    }
+
+    public String getSha256() {
+        return sha256;
+    }
+
+    public void setSha256(String sha256) {
+        this.sha256 = sha256;
     }
 
     public long getSize() {

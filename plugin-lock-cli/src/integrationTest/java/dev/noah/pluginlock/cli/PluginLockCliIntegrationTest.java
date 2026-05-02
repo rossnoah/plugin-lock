@@ -145,10 +145,10 @@ class PluginLockCliIntegrationTest {
 
     @Test
     void executionErrorsAreReportedWithoutStackTraces() {
-        CliResult result = executeCapturing(tempDir, "install", "luckperms", "--provider", "hangar", "--yes");
+        CliResult result = executeCapturing(tempDir, "install", "luckperms", "--provider", "unknown", "--yes");
 
         assertEquals(1, result.exitCode());
-        assertTrue(result.output().contains("Error: Unsupported provider: hangar"));
+        assertTrue(result.output().contains("Error: Unsupported provider: unknown"));
         assertFalse(result.output().contains("Exception"));
         assertFalse(result.output().contains("at dev.noah"));
     }

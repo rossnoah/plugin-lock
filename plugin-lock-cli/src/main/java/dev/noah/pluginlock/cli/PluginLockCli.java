@@ -7,6 +7,7 @@ import dev.noah.pluginlock.core.model.PluginLock;
 import dev.noah.pluginlock.core.model.PluginManifest;
 import dev.noah.pluginlock.core.model.PluginMetadata;
 import dev.noah.pluginlock.core.model.PluginRequest;
+import dev.noah.pluginlock.core.provider.HangarProvider;
 import dev.noah.pluginlock.core.provider.ModrinthProvider;
 import dev.noah.pluginlock.core.provider.PluginNotFoundException;
 import picocli.CommandLine;
@@ -47,6 +48,7 @@ public final class PluginLockCli implements Callable<Integer> {
     Path projectDir;
     private Path effectiveProjectDir;
     private final ModrinthProvider modrinthProvider = new ModrinthProvider(HttpClient.newHttpClient());
+    private final HangarProvider hangarProvider = new HangarProvider(HttpClient.newHttpClient());
 
     public static void main(String[] args) {
         int exitCode = commandLine(new PluginLockCli()).execute(args);
@@ -122,20 +124,110 @@ public final class PluginLockCli implements Callable<Integer> {
     }
 
     PluginMetadata fetchMetadata(String provider, String id) throws Exception {
-        if (!"modrinth".equalsIgnoreCase(provider)) {
-            throw new IllegalArgumentException("Unsupported provider: " + provider);
+        if ("modrinth".equalsIgnoreCase(provider)) {
+            return modrinthProvider.fetchMetadata(id);
         }
-        return modrinthProvider.fetchMetadata(id);
+        if ("hangar".equalsIgnoreCase(provider)) {
+            return hangarProvider.fetchMetadata(id);
+        }
+        throw new IllegalArgumentException("Unsupported provider: " + provider);
     }
 
-    boolean confirmPlugin(String provider, String id, boolean assumeYes) throws Exception {
-        if (assumeYes) {
-            return true;
+    PluginRequest selectPlugin(String provider, String id, String version, boolean assumeYes) throws Exception {
+        if (!"auto".equalsIgnoreCase(provider)) {
+            if (!assumeYes) {
+                PluginMetadata metadata = fetchMetadata(provider, id);
+                printMetadata(metadata);
+                if (!confirm("Install this plugin? [y/N] ")) {
+                    return null;
+                }
+                id = metadata.getId();
+            }
+            return new PluginRequest(id, provider.toLowerCase(Locale.ROOT), version);
         }
-        PluginMetadata metadata = fetchMetadata(provider, id);
-        printMetadata(metadata);
-        String answer = readConfirmation("Install this plugin? [y/N] ");
-        return "y".equalsIgnoreCase(answer) || "yes".equalsIgnoreCase(answer);
+
+        List<PluginMetadata> matches = findProviderMatches(id);
+        if (matches.isEmpty()) {
+            throw new PluginNotFoundException("Modrinth or Hangar", id);
+        }
+        PluginMetadata selected = matches.get(0);
+        if (matches.size() > 1 || !assumeYes) {
+            printProviderMatches(id, matches);
+        }
+        if (matches.size() > 1 && !assumeYes) {
+            selected = confirmOrSelectProvider(matches);
+            if (selected == null) {
+                return null;
+            }
+        }
+        if (!assumeYes && matches.size() == 1 && !confirm("Install this plugin? [Y/n] ")) {
+            return null;
+        }
+        return new PluginRequest(selected.getId(), selected.getProvider(), version);
+    }
+
+    private List<PluginMetadata> findProviderMatches(String id) throws Exception {
+        List<PluginMetadata> matches = new ArrayList<>();
+        addIfFound(matches, "modrinth", id);
+        addIfFound(matches, "hangar", id);
+        return matches;
+    }
+
+    private void addIfFound(List<PluginMetadata> matches, String provider, String id) throws Exception {
+        try {
+            matches.add(fetchMetadata(provider, id));
+        } catch (PluginNotFoundException ignored) {
+        }
+    }
+
+    private static void printProviderMatches(String id, List<PluginMetadata> matches) {
+        System.out.println();
+        System.out.println("Found " + matches.size() + " provider match(es) for " + id + ":");
+        for (int index = 0; index < matches.size(); index++) {
+            PluginMetadata metadata = matches.get(index);
+            String defaultLabel = index == 0 ? " (default)" : "";
+            System.out.println((index + 1) + ". " + metadata.getProvider() + ":" + metadata.getId()
+                    + " - " + metadata.getName() + defaultLabel);
+            if (metadata.getDescription() != null && !metadata.getDescription().isBlank()) {
+                System.out.println("   " + metadata.getDescription());
+            }
+            System.out.println("   Downloads: " + String.format(Locale.US, "%,d", metadata.getDownloads()));
+        }
+        System.out.println();
+    }
+
+    private static PluginMetadata confirmOrSelectProvider(List<PluginMetadata> matches) {
+        PluginMetadata selected = matches.get(0);
+        if (confirm("Install " + selected.getProvider() + ":" + selected.getId() + "? [Y/n] ")) {
+            return selected;
+        }
+        selected = selectProvider(matches);
+        printMetadata(selected);
+        if (confirm("Install this plugin? [Y/n] ")) {
+            return selected;
+        }
+        return null;
+    }
+
+    private static PluginMetadata selectProvider(List<PluginMetadata> matches) {
+        String answer = readConfirmation("Select provider [1]: ");
+        if (answer.isBlank()) {
+            return matches.get(0);
+        }
+        try {
+            int selected = Integer.parseInt(answer);
+            if (selected >= 1 && selected <= matches.size()) {
+                return matches.get(selected - 1);
+            }
+        } catch (NumberFormatException ignored) {
+        }
+        System.out.println("Invalid selection; using " + matches.get(0).getProvider() + ":" + matches.get(0).getId());
+        return matches.get(0);
+    }
+
+    private static boolean confirm(String prompt) {
+        String answer = readConfirmation(prompt);
+        return answer.isBlank() || "y".equalsIgnoreCase(answer) || "yes".equalsIgnoreCase(answer);
     }
 
     static void printMetadata(PluginMetadata metadata) {
@@ -160,9 +252,6 @@ public final class PluginLockCli implements Callable<Integer> {
         System.out.print(prompt);
         try {
             BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
-            if (!reader.ready()) {
-                return "";
-            }
             String answer = reader.readLine();
             return answer == null ? "" : answer.trim();
         } catch (Exception exception) {
@@ -204,7 +293,7 @@ public final class PluginLockCli implements Callable<Integer> {
         @Parameters(index = "0", description = "Provider project slug or id, for example luckperms.")
         String id;
 
-        @Option(names = "--provider", defaultValue = "modrinth", description = "Plugin provider.")
+        @Option(names = "--provider", defaultValue = "auto", description = "Plugin provider: auto, modrinth, or hangar.")
         String provider;
 
         @Option(names = "--version", defaultValue = "latest", description = "Version id, version number, or latest.")
@@ -217,13 +306,14 @@ public final class PluginLockCli implements Callable<Integer> {
         public Integer call() throws Exception {
             PluginManifest manifest = parent.readManifestOrDefault();
             ensurePluginsList(manifest);
-            if (!parent.confirmPlugin(provider, id, yes)) {
+            PluginRequest request = parent.selectPlugin(provider, id, version, yes);
+            if (request == null) {
                 System.out.println("Cancelled");
                 return 1;
             }
-            addOrReplace(manifest, id, provider, version);
+            addOrReplace(manifest, request);
             parent.writeManifest(manifest);
-            System.out.println("Added " + provider + ":" + id + "@" + version);
+            System.out.println("Added " + request.getProvider() + ":" + request.getId() + "@" + request.getVersion());
             return 0;
         }
     }
@@ -250,7 +340,7 @@ public final class PluginLockCli implements Callable<Integer> {
         @Parameters(arity = "0..*", description = "Optional provider project slugs or ids to add before installing.")
         List<String> ids = List.of();
 
-        @Option(names = "--provider", defaultValue = "modrinth", description = "Plugin provider for new package arguments.")
+        @Option(names = "--provider", defaultValue = "auto", description = "Plugin provider for new package arguments: auto, modrinth, or hangar.")
         String provider;
 
         @Option(names = "--version", defaultValue = "latest", description = "Version id, version number, or latest for new package arguments.")
@@ -273,11 +363,12 @@ public final class PluginLockCli implements Callable<Integer> {
                 PluginManifest manifest = parent.readManifestOrDefault();
                 ensurePluginsList(manifest);
                 for (String id : ids) {
-                    if (!parent.confirmPlugin(provider, id, yes)) {
+                    PluginRequest request = parent.selectPlugin(provider, id, version, yes);
+                    if (request == null) {
                         System.out.println("Cancelled");
                         return 1;
                     }
-                    addOrReplace(manifest, id, provider, version);
+                    addOrReplace(manifest, request);
                 }
                 parent.writeManifest(manifest);
                 lock = parent.resolveAndWriteLock(manifest);
@@ -358,8 +449,13 @@ public final class PluginLockCli implements Callable<Integer> {
     }
 
     private static void addOrReplace(PluginManifest manifest, String id, String provider, String version) {
-        manifest.getPlugins().removeIf(plugin -> id.equals(plugin.getId()) && provider.equals(plugin.getProvider()));
-        manifest.getPlugins().add(new PluginRequest(id, provider, version));
+        addOrReplace(manifest, new PluginRequest(id, provider, version));
+    }
+
+    private static void addOrReplace(PluginManifest manifest, PluginRequest request) {
+        manifest.getPlugins().removeIf(plugin -> request.getId().equals(plugin.getId())
+                && request.getProvider().equals(plugin.getProvider()));
+        manifest.getPlugins().add(request);
     }
 
     private static final class FriendlyExecutionExceptionHandler implements CommandLine.IExecutionExceptionHandler {

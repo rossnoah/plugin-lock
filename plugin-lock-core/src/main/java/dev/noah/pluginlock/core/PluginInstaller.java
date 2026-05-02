@@ -37,19 +37,20 @@ public final class PluginInstaller {
 
     private void install(LockedPlugin plugin, Path pluginsDirectory) throws IOException, InterruptedException {
         Path target = pluginsDirectory.resolve(plugin.getFileName());
-        if (Files.exists(target) && plugin.getSha512().equalsIgnoreCase(sha512(target))) {
+        HashCheck hashCheck = hashCheck(plugin);
+        if (Files.exists(target) && hashCheck.expectedHash().equalsIgnoreCase(hash(target, hashCheck.algorithm()))) {
             return;
         }
 
         Path temp = Files.createTempFile(pluginsDirectory, plugin.getFileName(), ".download");
         try {
-            MessageDigest digest = messageDigest();
+            MessageDigest digest = messageDigest(hashCheck.algorithm());
             try (InputStream body = new DigestInputStream(openDownload(plugin), digest)) {
                 Files.copy(body, temp, StandardCopyOption.REPLACE_EXISTING);
             }
             String actualHash = HexFormat.of().formatHex(digest.digest());
-            if (!plugin.getSha512().equalsIgnoreCase(actualHash)) {
-                throw new IOException("SHA-512 mismatch for " + plugin.getId());
+            if (!hashCheck.expectedHash().equalsIgnoreCase(actualHash)) {
+                throw new IOException(hashCheck.algorithm() + " mismatch for " + plugin.getId());
             }
             Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
         } finally {
@@ -75,18 +76,35 @@ public final class PluginInstaller {
     }
 
     public static String sha512(Path path) throws IOException {
-        MessageDigest digest = messageDigest();
+        return hash(path, "SHA-512");
+    }
+
+    private static String hash(Path path, String algorithm) throws IOException {
+        MessageDigest digest = messageDigest(algorithm);
         try (InputStream input = new DigestInputStream(Files.newInputStream(path), digest)) {
             input.transferTo(OutputStreamDiscard.INSTANCE);
         }
         return HexFormat.of().formatHex(digest.digest());
     }
 
-    private static MessageDigest messageDigest() {
-        try {
-            return MessageDigest.getInstance("SHA-512");
-        } catch (NoSuchAlgorithmException exception) {
-            throw new IllegalStateException("SHA-512 is not available", exception);
+    private static HashCheck hashCheck(LockedPlugin plugin) {
+        if (plugin.getSha512() != null && !plugin.getSha512().isBlank()) {
+            return new HashCheck("SHA-512", plugin.getSha512());
         }
+        if (plugin.getSha256() != null && !plugin.getSha256().isBlank()) {
+            return new HashCheck("SHA-256", plugin.getSha256());
+        }
+        throw new IllegalArgumentException("No supported hash for " + plugin.getId());
+    }
+
+    private static MessageDigest messageDigest(String algorithm) {
+        try {
+            return MessageDigest.getInstance(algorithm);
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException(algorithm + " is not available", exception);
+        }
+    }
+
+    private record HashCheck(String algorithm, String expectedHash) {
     }
 }
