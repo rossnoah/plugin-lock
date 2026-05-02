@@ -1,5 +1,6 @@
 package dev.noah.pluginlock.cli;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.noah.pluginlock.core.PluginInstaller;
 import dev.noah.pluginlock.core.PluginLockFiles;
 import dev.noah.pluginlock.core.PluginResolver;
@@ -25,8 +26,10 @@ import java.net.http.HttpClient;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.Callable;
 
 @Command(
@@ -44,11 +47,16 @@ import java.util.concurrent.Callable;
         }
 )
 public final class PluginLockCli implements Callable<Integer> {
+    private static final ObjectMapper JSON = new ObjectMapper().findAndRegisterModules();
     private static final String DEFAULT_MINECRAFT_VERSION = "1.21.4";
     private static final String DEFAULT_LOADER = "paper";
 
     @Option(names = "--project-dir", defaultValue = ".", description = "Directory containing plugin-lock files.")
     Path projectDir;
+    @Option(names = "--verbose", description = "Show detailed command output.")
+    boolean verbose;
+    @Option(names = "--json", description = "Emit machine-readable JSON events.")
+    boolean json;
     private Path effectiveProjectDir;
     private final ModrinthProvider modrinthProvider = new ModrinthProvider(HttpClient.newHttpClient());
     private final HangarProvider hangarProvider = new HangarProvider(HttpClient.newHttpClient());
@@ -70,6 +78,10 @@ public final class PluginLockCli implements Callable<Integer> {
     static CommandLine commandLine(PluginLockCli cli) {
         return new CommandLine(cli)
                 .setExecutionExceptionHandler(new FriendlyExecutionExceptionHandler());
+    }
+
+    Output output() {
+        return new Output(verbose, json);
     }
 
     @Override
@@ -198,37 +210,38 @@ public final class PluginLockCli implements Callable<Integer> {
 
     private static void printProviderMatches(String id, List<PluginMetadata> matches) {
         System.out.println();
-        System.out.println("Found " + matches.size() + " provider match(es) for " + id + ":");
+        System.out.println(Ansi.bold("Found " + matches.size() + " provider match(es) for " + id + ":"));
         for (int index = 0; index < matches.size(); index++) {
             PluginMetadata metadata = matches.get(index);
-            String defaultLabel = index == 0 ? " (default)" : "";
-            System.out.println((index + 1) + ". " + metadata.getProvider() + ":" + metadata.getId()
+            String defaultLabel = index == 0 ? Ansi.yellow(" (default)") : "";
+            System.out.println((index + 1) + ". " + Ansi.blue(metadata.getProvider() + ":" + metadata.getId())
                     + " - " + metadata.getName() + defaultLabel);
             if (metadata.getDescription() != null && !metadata.getDescription().isBlank()) {
-                System.out.println("   " + metadata.getDescription());
+                System.out.println(Ansi.dim("   " + metadata.getDescription()));
             }
-            System.out.println("   Downloads: " + String.format(Locale.US, "%,d", metadata.getDownloads()));
+            System.out.println(Ansi.dim("   Downloads: " + String.format(Locale.US, "%,d", metadata.getDownloads())));
         }
         System.out.println();
     }
 
     private static PluginMetadata confirmOrSelectProvider(List<PluginMetadata> matches) {
         PluginMetadata selected = matches.get(0);
-        if (confirm("Install " + selected.getProvider() + ":" + selected.getId() + "? [Y/n] ")) {
+        if (confirm("Install " + selected.getProvider() + ":" + selected.getId() + "? " + Ansi.yellow("[Y/n]") + " ")) {
             return selected;
         }
-        selected = selectProvider(matches);
+        int fallbackIndex = matches.size() > 1 ? 1 : 0;
+        selected = selectProvider(matches, fallbackIndex);
         printMetadata(selected);
-        if (confirm("Install this plugin? [Y/n] ")) {
+        if (confirm("Install this plugin? " + Ansi.yellow("[Y/n]") + " ")) {
             return selected;
         }
         return null;
     }
 
-    private static PluginMetadata selectProvider(List<PluginMetadata> matches) {
-        String answer = readConfirmation("Select provider [1]: ");
+    static PluginMetadata selectProvider(List<PluginMetadata> matches, int fallbackIndex) {
+        String answer = readConfirmation("Select provider " + Ansi.yellow("[" + (fallbackIndex + 1) + "]") + ": ");
         if (answer.isBlank()) {
-            return matches.get(0);
+            return matches.get(fallbackIndex);
         }
         try {
             int selected = Integer.parseInt(answer);
@@ -237,8 +250,9 @@ public final class PluginLockCli implements Callable<Integer> {
             }
         } catch (NumberFormatException ignored) {
         }
-        System.out.println("Invalid selection; using " + matches.get(0).getProvider() + ":" + matches.get(0).getId());
-        return matches.get(0);
+        PluginMetadata fallback = matches.get(fallbackIndex);
+        System.out.println(Ansi.yellow("Invalid selection; using " + fallback.getProvider() + ":" + fallback.getId()));
+        return fallback;
     }
 
     private static boolean confirm(String prompt) {
@@ -248,7 +262,7 @@ public final class PluginLockCli implements Callable<Integer> {
 
     static void printMetadata(PluginMetadata metadata) {
         System.out.println();
-        System.out.println(metadata.getName() + " (" + metadata.getProvider() + ":" + metadata.getId() + ")");
+        System.out.println(Ansi.bold(metadata.getName()) + " (" + Ansi.blue(metadata.getProvider() + ":" + metadata.getId()) + ")");
         if (!metadata.getAuthors().isEmpty()) {
             System.out.println("Authors: " + String.join(", ", metadata.getAuthors()));
         }
@@ -320,12 +334,17 @@ public final class PluginLockCli implements Callable<Integer> {
             lock.setServer(lockedServer);
             PluginLockFiles.writeLock(parent.resolve(PluginLockFiles.LOCK_FILE), lock);
 
-            System.out.println("Created " + PluginLockFiles.MANIFEST_FILE);
-            System.out.println("Created " + PluginLockFiles.LOCK_FILE);
-            System.out.println("Downloaded " + serverJar.getFileName());
-            System.out.println("Server: " + lockedServer.getProvider() + " build " + lockedServer.getBuild());
-            System.out.println("Minecraft: " + manifest.getMinecraftVersion());
-            System.out.println("Loader: " + manifest.getLoader());
+            parent.output().success("init", "Initialized " + manifest.getMinecraftVersion() + " " + lockedServer.getProvider(), Map.of(
+                    "manifest", PluginLockFiles.MANIFEST_FILE,
+                    "lockfile", PluginLockFiles.LOCK_FILE,
+                    "server", lockedServer.getProvider(),
+                    "minecraftVersion", manifest.getMinecraftVersion(),
+                    "loader", manifest.getLoader(),
+                    "build", lockedServer.getBuild(),
+                    "serverJar", serverJar.getFileName().toString(),
+                    "downloadUrl", lockedServer.getDownloadUrl(),
+                    "sha256", lockedServer.getSha256() == null ? "" : lockedServer.getSha256()
+            ));
             return 0;
         }
     }
@@ -412,7 +431,11 @@ public final class PluginLockCli implements Callable<Integer> {
             }
             addOrReplace(manifest, request);
             parent.writeManifest(manifest);
-            System.out.println("Added " + request.getProvider() + ":" + request.getId() + "@" + request.getVersion());
+            parent.output().success("add", "Added " + request.getId(), Map.of(
+                    "id", request.getId(),
+                    "provider", request.getProvider(),
+                    "version", request.getVersion()
+            ));
             return 0;
         }
     }
@@ -426,7 +449,10 @@ public final class PluginLockCli implements Callable<Integer> {
         public Integer call() throws Exception {
             PluginManifest manifest = PluginLockFiles.readManifest(parent.resolve(PluginLockFiles.MANIFEST_FILE));
             PluginLock lock = parent.resolveAndWriteLock(manifest);
-            System.out.println("Locked " + lock.getPlugins().size() + " plugin(s)");
+            parent.output().success("lock", "Locked " + lock.getPlugins().size() + " plugin(s)", Map.of(
+                    "count", lock.getPlugins().size(),
+                    "plugins", lock.getPlugins().stream().map(LockedPlugin::getName).toList()
+            ));
             return 0;
         }
     }
@@ -478,7 +504,11 @@ public final class PluginLockCli implements Callable<Integer> {
             }
 
             new PluginInstaller().install(lock, resolvedPluginsDir);
-            System.out.println("Installed " + lock.getPlugins().size() + " plugin(s) into " + resolvedPluginsDir);
+            parent.output().success("install", "Installed " + lock.getPlugins().size() + " plugin(s)", Map.of(
+                    "count", lock.getPlugins().size(),
+                    "pluginsDir", resolvedPluginsDir.toString(),
+                    "files", lock.getPlugins().stream().map(LockedPlugin::getFileName).toList()
+            ));
             return 0;
         }
     }
@@ -500,7 +530,11 @@ public final class PluginLockCli implements Callable<Integer> {
                 Files.deleteIfExists(resolvedPluginsDir.resolve(plugin.getFileName()));
             }
             new PluginInstaller().install(lock, resolvedPluginsDir);
-            System.out.println("Clean installed " + lock.getPlugins().size() + " plugin(s) into " + resolvedPluginsDir);
+            parent.output().success("clean-install", "Clean installed " + lock.getPlugins().size() + " plugin(s)", Map.of(
+                    "count", lock.getPlugins().size(),
+                    "pluginsDir", resolvedPluginsDir.toString(),
+                    "files", lock.getPlugins().stream().map(LockedPlugin::getFileName).toList()
+            ));
             return 0;
         }
     }
@@ -556,18 +590,16 @@ public final class PluginLockCli implements Callable<Integer> {
                 parent.writeManifest(manifest);
             }
 
-            if (removedLockedPlugins.isEmpty()) {
-                System.out.println("No locked plugins matched " + String.join(", ", ids));
-            } else {
-                System.out.println("Removed " + removedLockedPlugins.size() + " locked plugin(s): "
-                        + String.join(", ", removedLockedPlugins.stream().map(LockedPlugin::getId).toList()));
-            }
-            if (!deleted.isEmpty()) {
-                System.out.println("Deleted " + deleted.size() + " installed jar(s): "
-                        + String.join(", ", deleted.stream().map(path -> path.getFileName().toString()).toList()));
-            }
-            System.out.println("Cleaned plugin-lock files; " + manifest.getPlugins().size()
-                    + " manifest entry(s), " + lock.getPlugins().size() + " lock entry(s) remain");
+            String message = removedLockedPlugins.isEmpty()
+                    ? "No locked plugins matched " + String.join(", ", ids)
+                    : "Removed " + removedLockedPlugins.size() + " plugin(s)";
+            parent.output().success("remove", message, Map.of(
+                    "requested", ids,
+                    "removed", removedLockedPlugins.stream().map(LockedPlugin::getId).toList(),
+                    "deletedFiles", deleted.stream().map(path -> path.getFileName().toString()).toList(),
+                    "manifestRemaining", manifest.getPlugins().size(),
+                    "lockRemaining", lock.getPlugins().size()
+            ));
             return 0;
         }
     }
@@ -592,6 +624,91 @@ public final class PluginLockCli implements Callable<Integer> {
                 : fileName;
     }
 
+    private record Output(boolean verbose, boolean json) {
+        void success(String command, String message, Map<String, ?> details) {
+            if (json) {
+                writeJson(Map.of(
+                        "status", "success",
+                        "command", command,
+                        "message", message,
+                        "details", details
+                ));
+                return;
+            }
+            System.out.println(Ansi.green(message));
+            if (verbose && details != null && !details.isEmpty()) {
+                details.forEach((key, value) -> System.out.println(Ansi.dim(key + ": " + value)));
+            }
+        }
+
+        static void error(boolean json, String message) {
+            if (json) {
+                writeJson(Map.of(
+                        "status", "error",
+                        "message", message
+                ));
+                return;
+            }
+            System.err.println(Ansi.red("Error: ") + message);
+        }
+
+        private static void writeJson(Map<String, ?> payload) {
+            try {
+                System.out.println(JSON.writeValueAsString(payload));
+            } catch (Exception exception) {
+                throw new IllegalStateException("Failed to write JSON output", exception);
+            }
+        }
+    }
+
+    private static final class Ansi {
+        private static final String RESET = "\u001B[0m";
+        private static final String BOLD = "\u001B[1m";
+        private static final String DIM = "\u001B[2m";
+        private static final String RED = "\u001B[31m";
+        private static final String GREEN = "\u001B[32m";
+        private static final String YELLOW = "\u001B[33m";
+        private static final String BLUE = "\u001B[34m";
+
+        private Ansi() {
+        }
+
+        static String bold(String text) {
+            return color(BOLD, text);
+        }
+
+        static String dim(String text) {
+            return color(DIM, text);
+        }
+
+        static String red(String text) {
+            return color(RED, text);
+        }
+
+        static String green(String text) {
+            return color(GREEN, text);
+        }
+
+        static String yellow(String text) {
+            return color(YELLOW, text);
+        }
+
+        static String blue(String text) {
+            return color(BLUE, text);
+        }
+
+        private static String color(String code, String text) {
+            if (!enabled()) {
+                return text;
+            }
+            return code + text + RESET;
+        }
+
+        private static boolean enabled() {
+            return System.console() != null && System.getenv("NO_COLOR") == null;
+        }
+    }
+
     private static void addOrReplace(PluginManifest manifest, String id, String provider, String version) {
         addOrReplace(manifest, new PluginRequest(id, provider, version));
     }
@@ -609,8 +726,17 @@ public final class PluginLockCli implements Callable<Integer> {
                 Thread.currentThread().interrupt();
             }
 
-            commandLine.getErr().println(commandLine.getColorScheme().errorText("Error: ") + friendlyMessage(exception));
+            boolean json = rootCli(commandLine).json;
+            Output.error(json, friendlyMessage(exception));
             return commandLine.getCommandSpec().exitCodeOnExecutionException();
+        }
+
+        private static PluginLockCli rootCli(CommandLine commandLine) {
+            CommandLine current = commandLine;
+            while (current.getParent() != null) {
+                current = current.getParent();
+            }
+            return (PluginLockCli) current.getCommandSpec().userObject();
         }
 
         private static String friendlyMessage(Exception exception) {

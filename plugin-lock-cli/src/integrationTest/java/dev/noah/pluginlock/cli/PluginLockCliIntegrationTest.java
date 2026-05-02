@@ -14,6 +14,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.PrintStream;
 import java.io.PrintWriter;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -327,6 +328,52 @@ class PluginLockCliIntegrationTest {
     }
 
     @Test
+    void defaultOutputUsesShortPredictableSuccessMessages() throws Exception {
+        writeSingleLockedPlugin("local", "local.jar");
+
+        CliResult result = executeCapturing(tempDir, "rm", "local");
+
+        assertEquals(0, result.exitCode());
+        assertTrue(result.output().contains("Removed 1 plugin(s)"));
+        assertFalse(result.output().contains("deletedFiles:"));
+        assertFalse(result.output().contains("\"status\""));
+    }
+
+    @Test
+    void verboseOutputIncludesStructuredDetailsAsText() throws Exception {
+        writeSingleLockedPlugin("local", "local.jar");
+
+        CliResult result = executeCapturing(tempDir, "--verbose", "rm", "local");
+
+        assertEquals(0, result.exitCode());
+        assertTrue(result.output().contains("Removed 1 plugin(s)"));
+        assertTrue(result.output().contains("removed: [local]"));
+        assertTrue(result.output().contains("lockRemaining: 0"));
+    }
+
+    @Test
+    void jsonOutputIncludesStableSuccessEnvelope() throws Exception {
+        writeSingleLockedPlugin("local", "local.jar");
+
+        CliResult result = executeCapturing(tempDir, "--json", "rm", "local");
+
+        assertEquals(0, result.exitCode());
+        assertTrue(result.output().contains("\"status\":\"success\""));
+        assertTrue(result.output().contains("\"command\":\"remove\""));
+        assertTrue(result.output().contains("\"removed\":[\"local\"]"));
+    }
+
+    @Test
+    void jsonOutputIncludesStableErrorEnvelope() {
+        CliResult result = executeCapturing(tempDir, "--json", "rm", "missing");
+
+        assertEquals(1, result.exitCode());
+        assertTrue(result.output().contains("\"status\":\"error\""));
+        assertTrue(result.output().contains("\"message\":\"No plugin-lock.json or plugin-lock.lock.json found. Run `pl init` first.\""));
+        assertFalse(result.output().contains("Error:"));
+    }
+
+    @Test
     void executionErrorsAreReportedWithoutStackTraces() {
         CliResult result = executeCapturing(tempDir, "install", "luckperms", "--provider", "unknown", "--yes");
 
@@ -379,11 +426,17 @@ class PluginLockCliIntegrationTest {
         commandArgs[1] = workingDirectory.toString();
         System.arraycopy(args, 0, commandArgs, 2, args.length);
         InputStream originalIn = System.in;
+        PrintStream originalOut = System.out;
+        PrintStream originalErr = System.err;
         try {
             System.setIn(new ByteArrayInputStream(input.getBytes(StandardCharsets.UTF_8)));
+            System.setOut(new PrintStream(output));
+            System.setErr(new PrintStream(output));
             return new CliResult(commandLine.execute(commandArgs), output.toString());
         } finally {
             System.setIn(originalIn);
+            System.setOut(originalOut);
+            System.setErr(originalErr);
         }
     }
 
@@ -399,6 +452,25 @@ class PluginLockCliIntegrationTest {
         plugin.setDownloadUrl(source.toUri().toString());
         plugin.setSha512(dev.noah.pluginlock.core.PluginInstaller.sha512(source));
         return plugin;
+    }
+
+    private void writeSingleLockedPlugin(String id, String fileName) throws Exception {
+        Path pluginsDir = tempDir.resolve("plugins");
+        Files.createDirectories(pluginsDir);
+        Files.writeString(pluginsDir.resolve(fileName), "jar body");
+
+        PluginManifest manifest = new PluginManifest();
+        manifest.setPlugins(java.util.List.of(new dev.noah.pluginlock.core.model.PluginRequest(id, "modrinth", "latest")));
+        PluginLockFiles.writeManifest(tempDir.resolve(PluginLockFiles.MANIFEST_FILE), manifest);
+
+        PluginLock lock = new PluginLock();
+        LockedPlugin plugin = new LockedPlugin();
+        plugin.setId(id);
+        plugin.setProvider("modrinth");
+        plugin.setName("Local");
+        plugin.setFileName(fileName);
+        lock.setPlugins(java.util.List.of(plugin));
+        PluginLockFiles.writeLock(tempDir.resolve(PluginLockFiles.LOCK_FILE), lock);
     }
 
     private static ApiServer apiServer() throws IOException {

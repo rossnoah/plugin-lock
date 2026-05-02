@@ -3,10 +3,14 @@ package dev.noah.pluginlock.cli;
 import dev.noah.pluginlock.core.model.PluginMetadata;
 import org.junit.jupiter.api.Test;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PluginLockCliTest {
@@ -34,5 +38,31 @@ class PluginLockCliTest {
         assertTrue(summary.contains("Authors: Luck"));
         assertTrue(summary.contains("Downloads: 1,234,567"));
         assertTrue(summary.contains("Description: A permissions plugin"));
+    }
+
+    @Test
+    void blankProviderSelectionUsesRequestedFallback() {
+        InputStream originalIn = System.in;
+        try {
+            System.setIn(new ByteArrayInputStream("\n".getBytes(StandardCharsets.UTF_8)));
+
+            PluginMetadata selected = PluginLockCli.selectProvider(List.of(
+                    metadata("modrinth", "perplayerkit"),
+                    metadata("hangar", "PerPlayerKit")
+            ), 1);
+
+            assertEquals("hangar", selected.getProvider());
+            assertEquals("PerPlayerKit", selected.getId());
+        } finally {
+            System.setIn(originalIn);
+        }
+    }
+
+    private static PluginMetadata metadata(String provider, String id) {
+        PluginMetadata metadata = new PluginMetadata();
+        metadata.setProvider(provider);
+        metadata.setId(id);
+        metadata.setName(id);
+        return metadata;
     }
 }

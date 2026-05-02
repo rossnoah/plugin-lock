@@ -40,6 +40,15 @@ pl ci
 
 ## CLI Commands
 
+Global output options:
+
+```sh
+pl --verbose install
+pl --json install
+```
+
+By default, commands print short human-readable status lines. `--verbose` adds details such as files, versions, hashes, and paths. `--json` emits stable machine-readable success/error envelopes for scripts.
+
 ### `pl init`
 
 Create a new `plugin-lock.json` and a starter `plugin-lock.lock.json`.
