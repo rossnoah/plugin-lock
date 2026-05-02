@@ -174,7 +174,7 @@ class PluginLockCliIntegrationTest {
             CliResult result = executeCapturingWithApi(server, tempDir, "init", "--yes");
 
             assertEquals(1, result.exitCode());
-            assertTrue(result.output().contains("Error: plugin-lock.json already exists"));
+            assertTrue(result.output().contains("Error: server-lock.json already exists"));
             assertFalse(result.output().contains("Exception"));
         }
     }
@@ -323,7 +323,7 @@ class PluginLockCliIntegrationTest {
         CliResult result = executeCapturing(tempDir, "rm", "missing");
 
         assertEquals(1, result.exitCode());
-        assertTrue(result.output().contains("Error: No plugin-lock.json or plugin-lock.lock.json found"));
+        assertTrue(result.output().contains("Error: No server-lock.json or server-lock.lock.json found"));
         assertFalse(result.output().contains("Exception"));
     }
 
@@ -369,7 +369,7 @@ class PluginLockCliIntegrationTest {
 
         assertEquals(1, result.exitCode());
         assertTrue(result.output().contains("\"status\":\"error\""));
-        assertTrue(result.output().contains("\"message\":\"No plugin-lock.json or plugin-lock.lock.json found. Run `pl init` first.\""));
+        assertTrue(result.output().contains("\"message\":\"No server-lock.json or server-lock.lock.json found. Run `pl init` first.\""));
         assertFalse(result.output().contains("Error:"));
     }
 

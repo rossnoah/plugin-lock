@@ -34,7 +34,7 @@ class PluginLockFilesTest {
 
     @Test
     void readsYamlManifest() throws Exception {
-        Path path = tempDir.resolve("plugin-lock.yaml");
+        Path path = tempDir.resolve("server-lock.yaml");
         java.nio.file.Files.writeString(path, """
                 minecraftVersion: 1.21.4
                 loader: paper

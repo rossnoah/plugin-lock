@@ -5,7 +5,7 @@ api-version: '1.21'
 author: Noah
 commands:
   pluginlock:
-    description: Install plugins from plugin-lock.lock.json.
+    description: Install plugins from server-lock.lock.json.
     usage: /pluginlock install
     permission: pluginlock.install
 permissions:

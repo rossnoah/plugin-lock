@@ -5,7 +5,7 @@
 The project exposes the same core behavior in two ways:
 
 - `pl`: a native CLI for managing plugins from your terminal.
-- `PluginLock`: a Paper plugin that can install from `plugin-lock.lock.json` on a Minecraft server.
+- `PluginLock`: a Paper plugin that can install from `server-lock.lock.json` on a Minecraft server.
 
 The current provider implementation supports Modrinth project slugs/ids.
 
@@ -27,8 +27,8 @@ pl install luckperms
 
 This creates:
 
-- `plugin-lock.json`: the editable manifest.
-- `plugin-lock.lock.json`: selected server build plus exact resolved plugin artifacts.
+- `server-lock.json`: the editable manifest.
+- `server-lock.lock.json`: selected server build plus exact resolved plugin artifacts.
 - `paper-*.jar` or `purpur-*.jar`: the selected server jar downloaded during init.
 - `plugins/*.jar`: downloaded plugin jars verified with SHA-512.
 
@@ -51,7 +51,7 @@ By default, commands print short human-readable status lines. `--verbose` adds d
 
 ### `pl init`
 
-Create a new `plugin-lock.json` and a starter `plugin-lock.lock.json`.
+Create a new `server-lock.json` and a starter `server-lock.lock.json`.
 
 ```sh
 pl init
@@ -60,7 +60,7 @@ pl init --server purpur
 pl init --yes
 ```
 
-`pl init` fetches available Paper and Purpur server versions from their downloads APIs, lets you choose the server software and Minecraft version, downloads the selected server jar, then records the selected server build in `plugin-lock.lock.json`. Paper downloads are verified with the API-provided SHA-256. Use `--yes` to accept the latest Paper build without prompts.
+`pl init` fetches available Paper and Purpur server versions from their downloads APIs, lets you choose the server software and Minecraft version, downloads the selected server jar, then records the selected server build in `server-lock.lock.json`. Paper downloads are verified with the API-provided SHA-256. Use `--yes` to accept the latest Paper build without prompts.
 
 ### `pl install` / `pl i`
 
@@ -84,7 +84,7 @@ pl install luckperms --yes
 
 ### `pl clean-install` / `pl ci`
 
-Install exactly from `plugin-lock.lock.json` without resolving newer versions. This is the CI/server equivalent of `npm ci`.
+Install exactly from `server-lock.lock.json` without resolving newer versions. This is the CI/server equivalent of `npm ci`.
 
 ```sh
 pl ci
@@ -103,7 +103,7 @@ pl uninstall luckperms
 
 ### `pl add`
 
-Edit `plugin-lock.json` without installing immediately.
+Edit `server-lock.json` without installing immediately.
 
 ```sh
 pl add luckperms
@@ -175,7 +175,7 @@ Put this jar in your server `plugins/` directory:
 plugin-lock-paper/build/libs/plugin-lock-paper-0.1.0-SNAPSHOT.jar
 ```
 
-Put `plugin-lock.lock.json` in the server root, start the server, then run:
+Put `server-lock.lock.json` in the server root, start the server, then run:
 
 ```txt
 /pluginlock install
@@ -185,7 +185,7 @@ Restart the server after installation so newly downloaded plugin jars load norma
 
 ## Manifest
 
-`plugin-lock.json` is the editable file:
+`server-lock.json` is the editable file:
 
 ```json
 {
@@ -201,7 +201,7 @@ Restart the server after installation so newly downloaded plugin jars load norma
 }
 ```
 
-`plugin-lock.lock.json` is generated. It records the resolved version id, download URL, filename, size, and SHA-512 hash for each plugin.
+`server-lock.lock.json` is generated. It records the resolved version id, download URL, filename, size, and SHA-512 hash for each plugin.
 
 ## Development
 

@@ -51,7 +51,7 @@ public final class PluginLockCli implements Callable<Integer> {
     private static final String DEFAULT_MINECRAFT_VERSION = "1.21.4";
     private static final String DEFAULT_LOADER = "paper";
 
-    @Option(names = "--project-dir", defaultValue = ".", description = "Directory containing plugin-lock files.")
+    @Option(names = "--project-dir", defaultValue = ".", description = "Directory containing server-lock files.")
     Path projectDir;
     @Option(names = "--verbose", description = "Show detailed command output.")
     boolean verbose;
@@ -297,7 +297,7 @@ public final class PluginLockCli implements Callable<Integer> {
         }
     }
 
-    @Command(name = "init", mixinStandardHelpOptions = true, description = "Create a plugin-lock.json manifest.")
+    @Command(name = "init", mixinStandardHelpOptions = true, description = "Create a server-lock.json manifest.")
     static final class InitCommand implements Callable<Integer> {
         @ParentCommand
         PluginLockCli parent;
@@ -440,7 +440,7 @@ public final class PluginLockCli implements Callable<Integer> {
         }
     }
 
-    @Command(name = "lock", hidden = true, mixinStandardHelpOptions = true, description = "Resolve plugin-lock.json into plugin-lock.lock.json.")
+    @Command(name = "lock", hidden = true, mixinStandardHelpOptions = true, description = "Resolve server-lock.json into server-lock.lock.json.")
     static final class LockCommand implements Callable<Integer> {
         @ParentCommand
         PluginLockCli parent;
@@ -500,7 +500,7 @@ public final class PluginLockCli implements Callable<Integer> {
             } else if (Files.exists(lockfilePath)) {
                 lock = PluginLockFiles.readLock(lockfilePath);
             } else {
-                throw new IllegalStateException("No plugin-lock.json or plugin-lock.lock.json found. Run `pl init` first.");
+                throw new IllegalStateException("No server-lock.json or server-lock.lock.json found. Run `pl init` first.");
             }
 
             new PluginInstaller().install(lock, resolvedPluginsDir);
@@ -513,7 +513,7 @@ public final class PluginLockCli implements Callable<Integer> {
         }
     }
 
-    @Command(name = "clean-install", aliases = "ci", mixinStandardHelpOptions = true, description = "Install exactly from plugin-lock.lock.json without resolving new versions.")
+    @Command(name = "clean-install", aliases = "ci", mixinStandardHelpOptions = true, description = "Install exactly from server-lock.lock.json without resolving new versions.")
     static final class CleanInstallCommand implements Callable<Integer> {
         @ParentCommand
         PluginLockCli parent;
@@ -539,7 +539,7 @@ public final class PluginLockCli implements Callable<Integer> {
         }
     }
 
-    @Command(name = "remove", aliases = {"rm", "uninstall"}, mixinStandardHelpOptions = true, description = "Remove plugins recorded in plugin-lock files.")
+    @Command(name = "remove", aliases = {"rm", "uninstall"}, mixinStandardHelpOptions = true, description = "Remove plugins recorded in server-lock files.")
     static final class RemoveCommand implements Callable<Integer> {
         @ParentCommand
         PluginLockCli parent;
@@ -555,7 +555,7 @@ public final class PluginLockCli implements Callable<Integer> {
             Path manifestPath = parent.resolve(PluginLockFiles.MANIFEST_FILE);
             Path lockfilePath = parent.resolve(PluginLockFiles.LOCK_FILE);
             if (Files.notExists(manifestPath) && Files.notExists(lockfilePath)) {
-                throw new IllegalStateException("No plugin-lock.json or plugin-lock.lock.json found. Run `pl init` first.");
+                throw new IllegalStateException("No server-lock.json or server-lock.lock.json found. Run `pl init` first.");
             }
 
             Path resolvedPluginsDir = parent.pluginsDir(pluginsDir);

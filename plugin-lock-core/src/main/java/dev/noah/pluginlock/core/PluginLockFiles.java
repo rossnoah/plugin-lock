@@ -11,8 +11,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 public final class PluginLockFiles {
-    public static final String MANIFEST_FILE = "plugin-lock.json";
-    public static final String LOCK_FILE = "plugin-lock.lock.json";
+    public static final String MANIFEST_FILE = "server-lock.json";
+    public static final String LOCK_FILE = "server-lock.lock.json";
 
     private static final ObjectMapper JSON = new ObjectMapper()
             .enable(SerializationFeature.INDENT_OUTPUT)
