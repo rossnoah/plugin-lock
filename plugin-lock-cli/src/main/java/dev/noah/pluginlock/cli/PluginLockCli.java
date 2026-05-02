@@ -3,6 +3,7 @@ package dev.noah.pluginlock.cli;
 import dev.noah.pluginlock.core.PluginInstaller;
 import dev.noah.pluginlock.core.PluginLockFiles;
 import dev.noah.pluginlock.core.PluginResolver;
+import dev.noah.pluginlock.core.model.LockedPlugin;
 import dev.noah.pluginlock.core.model.PluginLock;
 import dev.noah.pluginlock.core.model.PluginManifest;
 import dev.noah.pluginlock.core.model.PluginMetadata;
@@ -406,7 +407,7 @@ public final class PluginLockCli implements Callable<Integer> {
         }
     }
 
-    @Command(name = "remove", aliases = {"rm", "uninstall"}, mixinStandardHelpOptions = true, description = "Remove plugins from the manifest and lockfile.")
+    @Command(name = "remove", aliases = {"rm", "uninstall"}, mixinStandardHelpOptions = true, description = "Remove plugins recorded in plugin-lock files.")
     static final class RemoveCommand implements Callable<Integer> {
         @ParentCommand
         PluginLockCli parent;
@@ -419,33 +420,78 @@ public final class PluginLockCli implements Callable<Integer> {
 
         @Override
         public Integer call() throws Exception {
-            PluginManifest manifest = PluginLockFiles.readManifest(parent.resolve(PluginLockFiles.MANIFEST_FILE));
-            ensurePluginsList(manifest);
+            Path manifestPath = parent.resolve(PluginLockFiles.MANIFEST_FILE);
             Path lockfilePath = parent.resolve(PluginLockFiles.LOCK_FILE);
-            PluginLock oldLock = Files.exists(lockfilePath) ? PluginLockFiles.readLock(lockfilePath) : new PluginLock();
-
-            manifest.getPlugins().removeIf(plugin -> ids.contains(plugin.getId()));
-            parent.writeManifest(manifest);
-
-            PluginLock newLock = new PluginLock();
-            newLock.setMinecraftVersion(manifest.getMinecraftVersion());
-            newLock.setLoader(manifest.getLoader());
-            if (!manifest.getPlugins().isEmpty()) {
-                newLock = parent.resolveAndWriteLock(manifest);
-            } else {
-                PluginLockFiles.writeLock(lockfilePath, newLock);
+            if (Files.notExists(manifestPath) && Files.notExists(lockfilePath)) {
+                throw new IllegalStateException("No plugin-lock.json or plugin-lock.lock.json found. Run `pl init` first.");
             }
 
             Path resolvedPluginsDir = parent.pluginsDir(pluginsDir);
-            for (dev.noah.pluginlock.core.model.LockedPlugin plugin : oldLock.getPlugins()) {
-                if (ids.contains(plugin.getId())) {
-                    Files.deleteIfExists(resolvedPluginsDir.resolve(plugin.getFileName()));
+            List<LockedPlugin> removedLockedPlugins;
+            PluginLock lock = new PluginLock();
+            if (Files.exists(lockfilePath)) {
+                lock = PluginLockFiles.readLock(lockfilePath);
+                removedLockedPlugins = lock.getPlugins().stream()
+                        .filter(plugin -> matchesLockedPlugin(ids, plugin))
+                        .toList();
+                lock.getPlugins().removeIf(plugin -> matchesLockedPlugin(ids, plugin));
+                PluginLockFiles.writeLock(lockfilePath, lock);
+            } else {
+                removedLockedPlugins = List.of();
+            }
+
+            List<Path> deleted = new ArrayList<>();
+            for (LockedPlugin plugin : removedLockedPlugins) {
+                Path jar = resolvedPluginsDir.resolve(plugin.getFileName());
+                if (Files.deleteIfExists(jar)) {
+                    deleted.add(jar);
                 }
             }
 
-            System.out.println("Removed " + ids.size() + " plugin(s); " + newLock.getPlugins().size() + " remain locked");
+            PluginManifest manifest = new PluginManifest();
+            if (Files.exists(manifestPath)) {
+                manifest = PluginLockFiles.readManifest(manifestPath);
+                ensurePluginsList(manifest);
+                manifest.getPlugins().removeIf(plugin -> matchesAny(ids, plugin.getId())
+                        || removedLockedPlugins.stream().anyMatch(removed -> removed.getProvider().equalsIgnoreCase(plugin.getProvider())
+                        && removed.getId().equalsIgnoreCase(plugin.getId())));
+                parent.writeManifest(manifest);
+            }
+
+            if (removedLockedPlugins.isEmpty()) {
+                System.out.println("No locked plugins matched " + String.join(", ", ids));
+            } else {
+                System.out.println("Removed " + removedLockedPlugins.size() + " locked plugin(s): "
+                        + String.join(", ", removedLockedPlugins.stream().map(LockedPlugin::getId).toList()));
+            }
+            if (!deleted.isEmpty()) {
+                System.out.println("Deleted " + deleted.size() + " installed jar(s): "
+                        + String.join(", ", deleted.stream().map(path -> path.getFileName().toString()).toList()));
+            }
+            System.out.println("Cleaned plugin-lock files; " + manifest.getPlugins().size()
+                    + " manifest entry(s), " + lock.getPlugins().size() + " lock entry(s) remain");
             return 0;
         }
+    }
+
+    private static boolean matchesAny(List<String> ids, String value) {
+        return value != null && ids.stream().anyMatch(id -> id.equalsIgnoreCase(value));
+    }
+
+    private static boolean matchesLockedPlugin(List<String> ids, LockedPlugin plugin) {
+        return matchesAny(ids, plugin.getId())
+                || matchesAny(ids, plugin.getName())
+                || matchesAny(ids, plugin.getFileName())
+                || matchesAny(ids, fileStem(plugin.getFileName()));
+    }
+
+    private static String fileStem(String fileName) {
+        if (fileName == null) {
+            return null;
+        }
+        return fileName.toLowerCase(Locale.ROOT).endsWith(".jar")
+                ? fileName.substring(0, fileName.length() - ".jar".length())
+                : fileName;
     }
 
     private static void addOrReplace(PluginManifest manifest, String id, String provider, String version) {

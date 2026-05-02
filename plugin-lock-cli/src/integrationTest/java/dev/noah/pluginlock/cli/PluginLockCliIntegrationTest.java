@@ -144,6 +144,35 @@ class PluginLockCliIntegrationTest {
     }
 
     @Test
+    void removeMatchesPluginNameRecordedInLockfile() throws Exception {
+        Path pluginsDir = tempDir.resolve("plugins");
+        Files.createDirectories(pluginsDir);
+        Files.writeString(pluginsDir.resolve("renamed-artifact.jar"), "jar body");
+
+        PluginManifest manifest = new PluginManifest();
+        manifest.setPlugins(java.util.List.of(new dev.noah.pluginlock.core.model.PluginRequest("provider-slug", "modrinth", "latest")));
+        PluginLockFiles.writeManifest(tempDir.resolve(PluginLockFiles.MANIFEST_FILE), manifest);
+
+        PluginLock lock = new PluginLock();
+        lock.setMinecraftVersion("1.21.4");
+        lock.setLoader("paper");
+        LockedPlugin plugin = new LockedPlugin();
+        plugin.setId("provider-slug");
+        plugin.setProvider("modrinth");
+        plugin.setName("RuntimeName");
+        plugin.setFileName("renamed-artifact.jar");
+        lock.setPlugins(java.util.List.of(plugin));
+        PluginLockFiles.writeLock(tempDir.resolve(PluginLockFiles.LOCK_FILE), lock);
+
+        int exitCode = execute(tempDir, "rm", "runtimename", "--plugins-dir", pluginsDir.toString());
+
+        assertEquals(0, exitCode);
+        assertTrue(Files.notExists(pluginsDir.resolve("renamed-artifact.jar")));
+        assertTrue(PluginLockFiles.readManifest(tempDir.resolve(PluginLockFiles.MANIFEST_FILE)).getPlugins().isEmpty());
+        assertTrue(PluginLockFiles.readLock(tempDir.resolve(PluginLockFiles.LOCK_FILE)).getPlugins().isEmpty());
+    }
+
+    @Test
     void executionErrorsAreReportedWithoutStackTraces() {
         CliResult result = executeCapturing(tempDir, "install", "luckperms", "--provider", "unknown", "--yes");
 
@@ -182,4 +211,5 @@ class PluginLockCliIntegrationTest {
         plugin.setSha512(dev.noah.pluginlock.core.PluginInstaller.sha512(source));
         return plugin;
     }
+
 }
