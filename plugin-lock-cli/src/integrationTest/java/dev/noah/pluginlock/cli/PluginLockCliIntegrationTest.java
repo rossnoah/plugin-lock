@@ -173,6 +173,53 @@ class PluginLockCliIntegrationTest {
     }
 
     @Test
+    void removeMatchesFileNameRecordedInLockfile() throws Exception {
+        Path pluginsDir = tempDir.resolve("plugins");
+        Files.createDirectories(pluginsDir);
+        Files.writeString(pluginsDir.resolve("artifact-name.jar"), "jar body");
+
+        PluginLock lock = new PluginLock();
+        LockedPlugin plugin = new LockedPlugin();
+        plugin.setId("provider-slug");
+        plugin.setProvider("modrinth");
+        plugin.setName("Provider Slug");
+        plugin.setFileName("artifact-name.jar");
+        lock.setPlugins(java.util.List.of(plugin));
+        PluginLockFiles.writeLock(tempDir.resolve(PluginLockFiles.LOCK_FILE), lock);
+
+        int exitCode = execute(tempDir, "rm", "artifact-name", "--plugins-dir", pluginsDir.toString());
+
+        assertEquals(0, exitCode);
+        assertTrue(Files.notExists(pluginsDir.resolve("artifact-name.jar")));
+        assertTrue(PluginLockFiles.readLock(tempDir.resolve(PluginLockFiles.LOCK_FILE)).getPlugins().isEmpty());
+    }
+
+    @Test
+    void removeCleansManifestWhenLockfileIsMissing() throws Exception {
+        PluginManifest manifest = new PluginManifest();
+        manifest.setPlugins(java.util.List.of(
+                new dev.noah.pluginlock.core.model.PluginRequest("keep", "modrinth", "latest"),
+                new dev.noah.pluginlock.core.model.PluginRequest("remove-me", "hangar", "latest")));
+        PluginLockFiles.writeManifest(tempDir.resolve(PluginLockFiles.MANIFEST_FILE), manifest);
+
+        int exitCode = execute(tempDir, "rm", "REMOVE-ME");
+
+        PluginManifest restored = PluginLockFiles.readManifest(tempDir.resolve(PluginLockFiles.MANIFEST_FILE));
+        assertEquals(0, exitCode);
+        assertEquals(1, restored.getPlugins().size());
+        assertEquals("keep", restored.getPlugins().getFirst().getId());
+    }
+
+    @Test
+    void removeFailsCleanlyWhenPluginLockFilesAreMissing() {
+        CliResult result = executeCapturing(tempDir, "rm", "missing");
+
+        assertEquals(1, result.exitCode());
+        assertTrue(result.output().contains("Error: No plugin-lock.json or plugin-lock.lock.json found"));
+        assertFalse(result.output().contains("Exception"));
+    }
+
+    @Test
     void executionErrorsAreReportedWithoutStackTraces() {
         CliResult result = executeCapturing(tempDir, "install", "luckperms", "--provider", "unknown", "--yes");
 

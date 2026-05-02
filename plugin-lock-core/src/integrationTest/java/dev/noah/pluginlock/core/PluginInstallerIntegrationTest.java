@@ -6,9 +6,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.net.http.HttpClient;
+import java.security.MessageDigest;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HexFormat;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -63,6 +65,35 @@ class PluginInstallerIntegrationTest {
         }
     }
 
+    @Test
+    void downloadsAndVerifiesPluginJarWithSha256FromFakeServer() throws Exception {
+        byte[] jarBytes = "hangar jar contents".getBytes(StandardCharsets.UTF_8);
+        try (TestHttpServer server = new TestHttpServer()) {
+            server.bytes("/download/hangar.jar", jarBytes);
+            LockedPlugin plugin = plugin(server.baseUri().resolve("download/hangar.jar").toString(), null);
+            plugin.setProvider("hangar");
+            plugin.setSha256(sha256(jarBytes));
+            PluginLock lock = lockWith(plugin);
+
+            Path pluginsDir = tempDir.resolve("plugins");
+            new PluginInstaller(HttpClient.newHttpClient()).install(lock, pluginsDir);
+
+            assertEquals("hangar jar contents", Files.readString(pluginsDir.resolve("fake.jar")));
+        }
+    }
+
+    @Test
+    void rejectsPluginWithoutSupportedHashBeforeDownload() throws Exception {
+        try (TestHttpServer server = new TestHttpServer()) {
+            LockedPlugin plugin = plugin(server.baseUri().resolve("download/fake.jar").toString(), null);
+            PluginLock lock = lockWith(plugin);
+
+            assertThrows(IllegalArgumentException.class, () ->
+                    new PluginInstaller(HttpClient.newHttpClient()).install(lock, tempDir.resolve("plugins")));
+            assertEquals(0, server.requestCount());
+        }
+    }
+
     private Path writeBytes(String name, byte[] body) throws Exception {
         Path path = tempDir.resolve(name);
         Files.write(path, body);
@@ -89,5 +120,9 @@ class PluginInstallerIntegrationTest {
         plugin.setSha512(sha512);
         plugin.setSize(1);
         return plugin;
+    }
+
+    private static String sha256(byte[] body) throws Exception {
+        return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(body));
     }
 }
