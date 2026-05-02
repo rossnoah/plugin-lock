@@ -1,0 +1,36 @@
+# Gradle
+.gradle/
+**/build/
+
+# Java
+out/
+*.class
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+*.war
+*.ear
+hs_err_pid*
+
+# Native packaging output
+*.dmg
+*.pkg
+*.msi
+*.deb
+*.rpm
+
+# IDE/editor
+.idea/
+*.iml
+.vscode/
+.DS_Store
+
+# Local Minecraft server scratch directories
+/plugins/
+/server/plugins/
+/test/
+
+# Generated plugin-lock files from ad hoc local runs
+/plugin-lock.json
+/plugin-lock.lock.json
+*/plugin-lock.json
+*/plugin-lock.lock.json

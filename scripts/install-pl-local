@@ -1,0 +1,21 @@
+#!/usr/bin/env sh
+set -eu
+
+repo_root="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+
+if [ "$(uname -s)" = "Darwin" ]; then
+  launcher="$repo_root/plugin-lock-cli/build/jpackage/output/pl.app/Contents/MacOS/pl"
+else
+  launcher="$repo_root/plugin-lock-cli/build/jpackage/output/pl/bin/pl"
+fi
+
+if [ ! -x "$launcher" ]; then
+  "$repo_root/gradlew" :plugin-lock-cli:jpackageImage 2>/dev/null || gradle -p "$repo_root" :plugin-lock-cli:jpackageImage
+fi
+
+bin_dir="${HOME}/.local/bin"
+mkdir -p "$bin_dir"
+ln -sfn "$launcher" "$bin_dir/pl"
+
+printf 'Installed pl -> %s/pl\n' "$bin_dir"
+printf 'Make sure %s is on your PATH.\n' "$bin_dir"
