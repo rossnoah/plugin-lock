@@ -2,11 +2,13 @@ package dev.noah.pluginlock.core.provider;
 
 import dev.noah.pluginlock.core.TestHttpServer;
 import dev.noah.pluginlock.core.model.LockedPlugin;
+import dev.noah.pluginlock.core.model.PluginMetadata;
 import dev.noah.pluginlock.core.model.PluginRequest;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import java.net.http.HttpClient;
+import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -84,6 +86,49 @@ class ModrinthProviderIntegrationTest {
     }
 
     @Test
+    void fetchesPluginMetadataAgainstFakeApi() throws Exception {
+        try (TestHttpServer server = new TestHttpServer()) {
+            server.json("/project/luckperms", """
+                    {
+                      "id":"Vebnzrzj",
+                      "title":"LuckPerms",
+                      "description":"A permissions plugin",
+                      "downloads":123456,
+                      "team":"team-1"
+                    }
+                    """);
+            server.json("/team/team-1/members", """
+                    [
+                      {"user":{"username":"Luck"}},
+                      {"user":{"username":"Perms"}}
+                    ]
+                    """);
+
+            PluginMetadata metadata = new ModrinthProvider(HttpClient.newHttpClient(), server.baseUri())
+                    .fetchMetadata("luckperms");
+
+            assertEquals("luckperms", metadata.getId());
+            assertEquals("LuckPerms", metadata.getName());
+            assertEquals("A permissions plugin", metadata.getDescription());
+            assertEquals(123456, metadata.getDownloads());
+            assertEquals(java.util.List.of("Luck", "Perms"), metadata.getAuthors());
+        }
+    }
+
+    @Test
+    void reportsPluginNotFoundAgainstFakeApi() throws Exception {
+        try (TestHttpServer server = new TestHttpServer()) {
+            server.response("/project/missing", 404, "application/json",
+                    "{}".getBytes(StandardCharsets.UTF_8));
+
+            PluginNotFoundException exception = assertThrows(PluginNotFoundException.class, () ->
+                    new ModrinthProvider(HttpClient.newHttpClient(), server.baseUri()).fetchMetadata("missing"));
+
+            assertTrue(exception.getMessage().contains("Plugin not found on Modrinth: missing"));
+        }
+    }
+
+    @Test
     @Tag("live")
     void resolvesLuckPermsAgainstRealModrinthApi() throws Exception {
         LockedPlugin plugin = new ModrinthProvider(HttpClient.newHttpClient())
@@ -95,5 +140,16 @@ class ModrinthProviderIntegrationTest {
         assertTrue(plugin.getFileName().endsWith(".jar"));
         assertEquals(128, plugin.getSha512().length());
         assertTrue(plugin.getSize() > 0);
+    }
+
+    @Test
+    @Tag("live")
+    void fetchesLuckPermsMetadataAgainstRealModrinthApi() throws Exception {
+        PluginMetadata metadata = new ModrinthProvider(HttpClient.newHttpClient()).fetchMetadata("luckperms");
+
+        assertEquals("luckperms", metadata.getId());
+        assertEquals("modrinth", metadata.getProvider());
+        assertTrue(metadata.getDownloads() > 0);
+        assertTrue(metadata.getName().toLowerCase().contains("luckperms"));
     }
 }

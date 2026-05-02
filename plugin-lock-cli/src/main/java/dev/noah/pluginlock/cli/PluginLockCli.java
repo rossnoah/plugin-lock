@@ -5,17 +5,24 @@ import dev.noah.pluginlock.core.PluginLockFiles;
 import dev.noah.pluginlock.core.PluginResolver;
 import dev.noah.pluginlock.core.model.PluginLock;
 import dev.noah.pluginlock.core.model.PluginManifest;
+import dev.noah.pluginlock.core.model.PluginMetadata;
 import dev.noah.pluginlock.core.model.PluginRequest;
+import dev.noah.pluginlock.core.provider.ModrinthProvider;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.ParentCommand;
 import picocli.CommandLine.Parameters;
 
+import java.io.Console;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.net.http.HttpClient;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.Callable;
 
 @Command(
@@ -36,6 +43,7 @@ public final class PluginLockCli implements Callable<Integer> {
     @Option(names = "--project-dir", defaultValue = ".", description = "Directory containing plugin-lock files.")
     Path projectDir;
     private Path effectiveProjectDir;
+    private final ModrinthProvider modrinthProvider = new ModrinthProvider(HttpClient.newHttpClient());
 
     public static void main(String[] args) {
         int exitCode = new CommandLine(new PluginLockCli()).execute(args);
@@ -104,7 +112,56 @@ public final class PluginLockCli implements Callable<Integer> {
         }
     }
 
-    @Command(name = "init", description = "Create a plugin-lock.json manifest.")
+    PluginMetadata fetchMetadata(String provider, String id) throws Exception {
+        if (!"modrinth".equalsIgnoreCase(provider)) {
+            throw new IllegalArgumentException("Unsupported provider: " + provider);
+        }
+        return modrinthProvider.fetchMetadata(id);
+    }
+
+    boolean confirmPlugin(String provider, String id, boolean assumeYes) throws Exception {
+        if (assumeYes) {
+            return true;
+        }
+        PluginMetadata metadata = fetchMetadata(provider, id);
+        printMetadata(metadata);
+        String answer = readConfirmation("Install this plugin? [y/N] ");
+        return "y".equalsIgnoreCase(answer) || "yes".equalsIgnoreCase(answer);
+    }
+
+    static void printMetadata(PluginMetadata metadata) {
+        System.out.println();
+        System.out.println(metadata.getName() + " (" + metadata.getProvider() + ":" + metadata.getId() + ")");
+        if (!metadata.getAuthors().isEmpty()) {
+            System.out.println("Authors: " + String.join(", ", metadata.getAuthors()));
+        }
+        System.out.println("Downloads: " + String.format(Locale.US, "%,d", metadata.getDownloads()));
+        if (metadata.getDescription() != null && !metadata.getDescription().isBlank()) {
+            System.out.println("Description: " + metadata.getDescription());
+        }
+        System.out.println();
+    }
+
+    private static String readConfirmation(String prompt) {
+        Console console = System.console();
+        if (console != null) {
+            String answer = console.readLine(prompt);
+            return answer == null ? "" : answer.trim();
+        }
+        System.out.print(prompt);
+        try {
+            BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
+            if (!reader.ready()) {
+                return "";
+            }
+            String answer = reader.readLine();
+            return answer == null ? "" : answer.trim();
+        } catch (Exception exception) {
+            return "";
+        }
+    }
+
+    @Command(name = "init", mixinStandardHelpOptions = true, description = "Create a plugin-lock.json manifest.")
     static final class InitCommand implements Callable<Integer> {
         @ParentCommand
         PluginLockCli parent;
@@ -130,7 +187,7 @@ public final class PluginLockCli implements Callable<Integer> {
         }
     }
 
-    @Command(name = "add", description = "Add a plugin request to the manifest.")
+    @Command(name = "add", mixinStandardHelpOptions = true, description = "Add a plugin request to the manifest.")
     static final class AddCommand implements Callable<Integer> {
         @ParentCommand
         PluginLockCli parent;
@@ -144,10 +201,17 @@ public final class PluginLockCli implements Callable<Integer> {
         @Option(names = "--version", defaultValue = "latest", description = "Version id, version number, or latest.")
         String version;
 
+        @Option(names = {"-y", "--yes"}, description = "Skip plugin metadata confirmation.")
+        boolean yes;
+
         @Override
         public Integer call() throws Exception {
             PluginManifest manifest = parent.readManifestOrDefault();
             ensurePluginsList(manifest);
+            if (!parent.confirmPlugin(provider, id, yes)) {
+                System.out.println("Cancelled");
+                return 1;
+            }
             addOrReplace(manifest, id, provider, version);
             parent.writeManifest(manifest);
             System.out.println("Added " + provider + ":" + id + "@" + version);
@@ -155,7 +219,7 @@ public final class PluginLockCli implements Callable<Integer> {
         }
     }
 
-    @Command(name = "lock", hidden = true, description = "Resolve plugin-lock.json into plugin-lock.lock.json.")
+    @Command(name = "lock", hidden = true, mixinStandardHelpOptions = true, description = "Resolve plugin-lock.json into plugin-lock.lock.json.")
     static final class LockCommand implements Callable<Integer> {
         @ParentCommand
         PluginLockCli parent;
@@ -169,7 +233,7 @@ public final class PluginLockCli implements Callable<Integer> {
         }
     }
 
-    @Command(name = "install", aliases = "i", description = "Install plugins and update the lockfile when a manifest is present.")
+    @Command(name = "install", aliases = "i", mixinStandardHelpOptions = true, description = "Install plugins and update the lockfile when a manifest is present.")
     static final class InstallCommand implements Callable<Integer> {
         @ParentCommand
         PluginLockCli parent;
@@ -186,6 +250,9 @@ public final class PluginLockCli implements Callable<Integer> {
         @Option(names = "--plugins-dir", defaultValue = "plugins", description = "Destination plugins directory.")
         Path pluginsDir;
 
+        @Option(names = {"-y", "--yes"}, description = "Skip plugin metadata confirmation for new plugins.")
+        boolean yes;
+
         @Override
         public Integer call() throws Exception {
             Path resolvedPluginsDir = parent.pluginsDir(pluginsDir);
@@ -197,6 +264,10 @@ public final class PluginLockCli implements Callable<Integer> {
                 PluginManifest manifest = parent.readManifestOrDefault();
                 ensurePluginsList(manifest);
                 for (String id : ids) {
+                    if (!parent.confirmPlugin(provider, id, yes)) {
+                        System.out.println("Cancelled");
+                        return 1;
+                    }
                     addOrReplace(manifest, id, provider, version);
                 }
                 parent.writeManifest(manifest);
@@ -213,7 +284,7 @@ public final class PluginLockCli implements Callable<Integer> {
         }
     }
 
-    @Command(name = "clean-install", aliases = "ci", description = "Install exactly from plugin-lock.lock.json without resolving new versions.")
+    @Command(name = "clean-install", aliases = "ci", mixinStandardHelpOptions = true, description = "Install exactly from plugin-lock.lock.json without resolving new versions.")
     static final class CleanInstallCommand implements Callable<Integer> {
         @ParentCommand
         PluginLockCli parent;
@@ -235,7 +306,7 @@ public final class PluginLockCli implements Callable<Integer> {
         }
     }
 
-    @Command(name = "remove", aliases = {"rm", "uninstall"}, description = "Remove plugins from the manifest and lockfile.")
+    @Command(name = "remove", aliases = {"rm", "uninstall"}, mixinStandardHelpOptions = true, description = "Remove plugins from the manifest and lockfile.")
     static final class RemoveCommand implements Callable<Integer> {
         @ParentCommand
         PluginLockCli parent;

@@ -3,6 +3,7 @@ package dev.noah.pluginlock.core.provider;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.noah.pluginlock.core.model.LockedPlugin;
+import dev.noah.pluginlock.core.model.PluginMetadata;
 import dev.noah.pluginlock.core.model.PluginRequest;
 
 import java.io.IOException;
@@ -12,6 +13,8 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 
 public final class ModrinthProvider {
@@ -32,7 +35,7 @@ public final class ModrinthProvider {
 
     public LockedPlugin resolve(PluginRequest request, String minecraftVersion, String loader)
             throws IOException, InterruptedException {
-        JsonNode project = get("project/" + segment(request.getId()));
+        JsonNode project = get("project/" + segment(request.getId()), request.getId());
         JsonNode versions = get("project/" + segment(request.getId()) + "/version"
                 + "?loaders=%5B%22" + query(loader.toLowerCase(Locale.ROOT)) + "%22%5D"
                 + "&game_versions=%5B%22" + query(minecraftVersion) + "%22%5D");
@@ -54,17 +57,51 @@ public final class ModrinthProvider {
         return locked;
     }
 
+    public PluginMetadata fetchMetadata(String id) throws IOException, InterruptedException {
+        JsonNode project = get("project/" + segment(id), id);
+        PluginMetadata metadata = new PluginMetadata();
+        metadata.setId(id);
+        metadata.setProvider("modrinth");
+        metadata.setName(project.path("title").asText(id));
+        metadata.setDescription(project.path("description").asText(""));
+        metadata.setDownloads(project.path("downloads").asLong());
+        metadata.setAuthors(fetchAuthors(project.path("team").asText(null)));
+        return metadata;
+    }
+
     private JsonNode get(String path) throws IOException, InterruptedException {
+        return get(path, null);
+    }
+
+    private JsonNode get(String path, String pluginId) throws IOException, InterruptedException {
         HttpRequest request = HttpRequest.newBuilder(apiBase.resolve(path))
                 .header("Accept", "application/json")
                 .header("User-Agent", "plugin-lock/0.1.0 (https://github.com/plugin-lock/plugin-lock)")
                 .GET()
                 .build();
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() == 404 && pluginId != null) {
+            throw new PluginNotFoundException("Modrinth", pluginId);
+        }
         if (response.statusCode() < 200 || response.statusCode() > 299) {
             throw new IOException("Modrinth request failed: HTTP " + response.statusCode() + " for " + path);
         }
         return JSON.readTree(response.body());
+    }
+
+    private List<String> fetchAuthors(String teamId) throws IOException, InterruptedException {
+        if (teamId == null || teamId.isBlank()) {
+            return List.of();
+        }
+        JsonNode members = get("team/" + segment(teamId) + "/members");
+        List<String> authors = new ArrayList<>();
+        for (JsonNode member : members) {
+            String username = member.path("user").path("username").asText("");
+            if (!username.isBlank()) {
+                authors.add(username);
+            }
+        }
+        return authors;
     }
 
     private static JsonNode selectVersion(PluginRequest request, JsonNode versions) {

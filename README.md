@@ -57,11 +57,14 @@ pl install luckperms
 pl i luckperms
 ```
 
+When installing a new plugin, `pl` fetches provider metadata first and asks for confirmation before adding or downloading it. The confirmation summary includes the plugin name, authors, download count, and description.
+
 Options:
 
 ```sh
 pl install luckperms --provider modrinth --version latest
 pl install --plugins-dir plugins
+pl install luckperms --yes
 ```
 
 ### `pl clean-install` / `pl ci`
@@ -90,7 +93,10 @@ Edit `plugin-lock.json` without installing immediately.
 ```sh
 pl add luckperms
 pl add luckperms --version latest
+pl add luckperms --yes
 ```
+
+`pl add` also asks for confirmation unless `--yes` is provided.
 
 ### Project Directory
 

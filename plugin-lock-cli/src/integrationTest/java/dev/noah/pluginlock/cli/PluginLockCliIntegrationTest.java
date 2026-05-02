@@ -72,8 +72,8 @@ class PluginLockCliIntegrationTest {
 
     @Test
     void addCreatesManifestWhenMissingAndReplacesDuplicateProviderEntry() throws Exception {
-        assertEquals(0, execute(tempDir, "add", "luckperms", "--version", "latest"));
-        assertEquals(0, execute(tempDir, "add", "luckperms", "--version", "v5"));
+        assertEquals(0, execute(tempDir, "add", "luckperms", "--version", "latest", "--yes"));
+        assertEquals(0, execute(tempDir, "add", "luckperms", "--version", "v5", "--yes"));
 
         PluginManifest manifest = PluginLockFiles.readManifest(tempDir.resolve(PluginLockFiles.MANIFEST_FILE));
         assertEquals(1, manifest.getPlugins().size());
