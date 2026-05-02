@@ -9,9 +9,7 @@ else
   launcher="$repo_root/plugin-lock-cli/build/jpackage/output/pl/bin/pl"
 fi
 
-if [ ! -x "$launcher" ]; then
-  "$repo_root/gradlew" :plugin-lock-cli:jpackageImage 2>/dev/null || gradle -p "$repo_root" :plugin-lock-cli:jpackageImage
-fi
+"$repo_root/gradlew" :plugin-lock-cli:jpackageImage 2>/dev/null || gradle -p "$repo_root" :plugin-lock-cli:jpackageImage
 
 bin_dir="${HOME}/.local/bin"
 mkdir -p "$bin_dir"

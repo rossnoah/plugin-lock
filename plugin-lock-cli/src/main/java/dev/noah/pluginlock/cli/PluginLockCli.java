@@ -8,14 +8,17 @@ import dev.noah.pluginlock.core.model.PluginManifest;
 import dev.noah.pluginlock.core.model.PluginMetadata;
 import dev.noah.pluginlock.core.model.PluginRequest;
 import dev.noah.pluginlock.core.provider.ModrinthProvider;
+import dev.noah.pluginlock.core.provider.PluginNotFoundException;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.ParentCommand;
+import picocli.CommandLine.ParseResult;
 import picocli.CommandLine.Parameters;
 
 import java.io.Console;
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.http.HttpClient;
 import java.nio.file.Files;
@@ -46,8 +49,13 @@ public final class PluginLockCli implements Callable<Integer> {
     private final ModrinthProvider modrinthProvider = new ModrinthProvider(HttpClient.newHttpClient());
 
     public static void main(String[] args) {
-        int exitCode = new CommandLine(new PluginLockCli()).execute(args);
+        int exitCode = commandLine(new PluginLockCli()).execute(args);
         System.exit(exitCode);
+    }
+
+    static CommandLine commandLine(PluginLockCli cli) {
+        return new CommandLine(cli)
+                .setExecutionExceptionHandler(new FriendlyExecutionExceptionHandler());
     }
 
     @Override
@@ -76,7 +84,8 @@ public final class PluginLockCli implements Callable<Integer> {
         if (hasProjectFiles(current)) {
             return current;
         }
-        if ("plugins".equalsIgnoreCase(current.getFileName().toString()) && current.getParent() != null) {
+        Path fileName = current.getFileName();
+        if (fileName != null && "plugins".equalsIgnoreCase(fileName.toString()) && current.getParent() != null) {
             return current.getParent();
         }
         Path pluginsChild = current.resolve("plugins");
@@ -351,5 +360,35 @@ public final class PluginLockCli implements Callable<Integer> {
     private static void addOrReplace(PluginManifest manifest, String id, String provider, String version) {
         manifest.getPlugins().removeIf(plugin -> id.equals(plugin.getId()) && provider.equals(plugin.getProvider()));
         manifest.getPlugins().add(new PluginRequest(id, provider, version));
+    }
+
+    private static final class FriendlyExecutionExceptionHandler implements CommandLine.IExecutionExceptionHandler {
+        @Override
+        public int handleExecutionException(Exception exception, CommandLine commandLine, ParseResult parseResult) {
+            if (exception instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+
+            commandLine.getErr().println(commandLine.getColorScheme().errorText("Error: ") + friendlyMessage(exception));
+            return commandLine.getCommandSpec().exitCodeOnExecutionException();
+        }
+
+        private static String friendlyMessage(Exception exception) {
+            if (exception instanceof PluginNotFoundException
+                    || exception instanceof IllegalArgumentException
+                    || exception instanceof IllegalStateException
+                    || exception instanceof IOException) {
+                return messageOrFallback(exception);
+            }
+            if (exception instanceof InterruptedException) {
+                return "Operation interrupted";
+            }
+            return messageOrFallback(exception);
+        }
+
+        private static String messageOrFallback(Exception exception) {
+            String message = exception.getMessage();
+            return message == null || message.isBlank() ? exception.getClass().getSimpleName() : message;
+        }
     }
 }

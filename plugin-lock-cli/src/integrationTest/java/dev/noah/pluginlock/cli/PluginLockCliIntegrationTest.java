@@ -14,6 +14,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PluginLockCliIntegrationTest {
@@ -142,16 +143,33 @@ class PluginLockCliIntegrationTest {
         assertTrue(Files.notExists(tempDir.resolve("plugins/local.jar")));
     }
 
+    @Test
+    void executionErrorsAreReportedWithoutStackTraces() {
+        CliResult result = executeCapturing(tempDir, "install", "luckperms", "--provider", "hangar", "--yes");
+
+        assertEquals(1, result.exitCode());
+        assertTrue(result.output().contains("Error: Unsupported provider: hangar"));
+        assertFalse(result.output().contains("Exception"));
+        assertFalse(result.output().contains("at dev.noah"));
+    }
+
     private static int execute(Path workingDirectory, String... args) {
+        return executeCapturing(workingDirectory, args).exitCode();
+    }
+
+    private static CliResult executeCapturing(Path workingDirectory, String... args) {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
-        CommandLine commandLine = new CommandLine(new PluginLockCli());
+        CommandLine commandLine = PluginLockCli.commandLine(new PluginLockCli());
         commandLine.setOut(new PrintWriter(output, true));
         commandLine.setErr(new PrintWriter(output, true));
         String[] commandArgs = new String[args.length + 2];
         commandArgs[0] = "--project-dir";
         commandArgs[1] = workingDirectory.toString();
         System.arraycopy(args, 0, commandArgs, 2, args.length);
-        return commandLine.execute(commandArgs);
+        return new CliResult(commandLine.execute(commandArgs), output.toString());
+    }
+
+    private record CliResult(int exitCode, String output) {
     }
 
     private static LockedPlugin lockedPlugin(String id, String fileName, Path source) throws Exception {
