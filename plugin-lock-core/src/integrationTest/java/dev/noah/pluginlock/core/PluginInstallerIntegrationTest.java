@@ -10,6 +10,7 @@ import java.security.MessageDigest;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 
@@ -79,6 +80,28 @@ class PluginInstallerIntegrationTest {
             new PluginInstaller(HttpClient.newHttpClient()).install(lock, pluginsDir);
 
             assertEquals("hangar jar contents", Files.readString(pluginsDir.resolve("fake.jar")));
+        }
+    }
+
+    @Test
+    void reportsDownloadProgressOnlyWhenDownloading() throws Exception {
+        byte[] jarBytes = "fake jar contents".getBytes(StandardCharsets.UTF_8);
+        try (TestHttpServer server = new TestHttpServer()) {
+            server.bytes("/download/fake.jar", jarBytes);
+            LockedPlugin plugin = plugin(server.baseUri().resolve("download/fake.jar").toString(),
+                    PluginInstaller.sha512(writeBytes("source.jar", jarBytes)));
+            plugin.setSize(jarBytes.length);
+            PluginLock lock = lockWith(plugin);
+            List<Long> updates = new ArrayList<>();
+
+            Path pluginsDir = tempDir.resolve("plugins");
+            new PluginInstaller(HttpClient.newHttpClient()).install(lock, pluginsDir,
+                    (fileName, downloadedBytes, totalBytes) -> updates.add(downloadedBytes));
+            new PluginInstaller(HttpClient.newHttpClient()).install(lock, pluginsDir,
+                    (fileName, downloadedBytes, totalBytes) -> updates.add(-1L));
+
+            assertEquals(List.of(0L, (long) jarBytes.length), updates);
+            assertEquals(1, server.requestCount());
         }
     }
 

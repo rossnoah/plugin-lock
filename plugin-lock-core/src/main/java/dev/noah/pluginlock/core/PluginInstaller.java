@@ -29,13 +29,17 @@ public final class PluginInstaller {
     }
 
     public void install(PluginLock lock, Path pluginsDirectory) throws IOException, InterruptedException {
+        install(lock, pluginsDirectory, DownloadProgress.NONE);
+    }
+
+    public void install(PluginLock lock, Path pluginsDirectory, DownloadProgress progress) throws IOException, InterruptedException {
         Files.createDirectories(pluginsDirectory);
         for (LockedPlugin plugin : lock.getPlugins()) {
-            install(plugin, pluginsDirectory);
+            install(plugin, pluginsDirectory, progress);
         }
     }
 
-    private void install(LockedPlugin plugin, Path pluginsDirectory) throws IOException, InterruptedException {
+    private void install(LockedPlugin plugin, Path pluginsDirectory, DownloadProgress progress) throws IOException, InterruptedException {
         Path target = pluginsDirectory.resolve(plugin.getFileName());
         HashCheck hashCheck = hashCheck(plugin);
         if (Files.exists(target) && hashCheck.expectedHash().equalsIgnoreCase(hash(target, hashCheck.algorithm()))) {
@@ -46,7 +50,7 @@ public final class PluginInstaller {
         try {
             MessageDigest digest = messageDigest(hashCheck.algorithm());
             try (InputStream body = new DigestInputStream(openDownload(plugin), digest)) {
-                Files.copy(body, temp, StandardCopyOption.REPLACE_EXISTING);
+                copyWithProgress(body, temp, plugin.getFileName(), plugin.getSize(), progress);
             }
             String actualHash = HexFormat.of().formatHex(digest.digest());
             if (!hashCheck.expectedHash().equalsIgnoreCase(actualHash)) {
@@ -55,6 +59,23 @@ public final class PluginInstaller {
             Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
         } finally {
             Files.deleteIfExists(temp);
+        }
+    }
+
+    private static void copyWithProgress(InputStream body, Path temp, String fileName, long totalBytes, DownloadProgress progress) throws IOException {
+        progress.update(fileName, 0, totalBytes);
+        try (var output = Files.newOutputStream(temp)) {
+            byte[] buffer = new byte[16 * 1024];
+            long downloaded = 0;
+            int read;
+            while ((read = body.read(buffer)) != -1) {
+                output.write(buffer, 0, read);
+                downloaded += read;
+                progress.update(fileName, downloaded, totalBytes);
+            }
+            if (totalBytes <= 0) {
+                progress.update(fileName, downloaded, downloaded);
+            }
         }
     }
 

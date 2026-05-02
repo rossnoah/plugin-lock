@@ -2,6 +2,7 @@ package dev.noah.pluginlock.cli;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import dev.noah.pluginlock.core.DownloadProgress;
 import dev.noah.pluginlock.core.model.LockedServer;
 
 import java.io.IOException;
@@ -60,6 +61,10 @@ final class ServerDownloads {
     }
 
     Path download(LockedServer server, Path targetDirectory) throws IOException, InterruptedException {
+        return download(server, targetDirectory, DownloadProgress.NONE);
+    }
+
+    Path download(LockedServer server, Path targetDirectory, DownloadProgress progress) throws IOException, InterruptedException {
         Files.createDirectories(targetDirectory);
         Path target = targetDirectory.resolve(server.getFileName());
         if (Files.exists(target) && hasExpectedHash(server, target)) {
@@ -72,7 +77,7 @@ final class ServerDownloads {
             if (response.statusCode() < 200 || response.statusCode() > 299) {
                 throw new IOException("Failed to download server jar: HTTP " + response.statusCode());
             }
-            copyAndVerify(response.body(), temp, server);
+            copyAndVerify(response.body(), temp, server, progress);
             Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
             return target;
         } finally {
@@ -158,18 +163,35 @@ final class ServerDownloads {
                 .build();
     }
 
-    private static void copyAndVerify(java.io.InputStream body, Path temp, LockedServer server) throws IOException {
+    private static void copyAndVerify(java.io.InputStream body, Path temp, LockedServer server, DownloadProgress progress) throws IOException {
         if (server.getSha256() == null || server.getSha256().isBlank()) {
-            Files.copy(body, temp, StandardCopyOption.REPLACE_EXISTING);
+            copyWithProgress(body, temp, server.getFileName(), server.getSize(), progress);
             return;
         }
         MessageDigest digest = sha256Digest();
         try (var digestBody = new DigestInputStream(body, digest)) {
-            Files.copy(digestBody, temp, StandardCopyOption.REPLACE_EXISTING);
+            copyWithProgress(digestBody, temp, server.getFileName(), server.getSize(), progress);
         }
         String actualHash = HexFormat.of().formatHex(digest.digest());
         if (!server.getSha256().equalsIgnoreCase(actualHash)) {
             throw new IOException("SHA-256 mismatch for server jar");
+        }
+    }
+
+    private static void copyWithProgress(java.io.InputStream body, Path temp, String fileName, long totalBytes, DownloadProgress progress) throws IOException {
+        progress.update(fileName, 0, totalBytes);
+        try (var output = Files.newOutputStream(temp)) {
+            byte[] buffer = new byte[16 * 1024];
+            long downloaded = 0;
+            int read;
+            while ((read = body.read(buffer)) != -1) {
+                output.write(buffer, 0, read);
+                downloaded += read;
+                progress.update(fileName, downloaded, totalBytes);
+            }
+            if (totalBytes <= 0) {
+                progress.update(fileName, downloaded, downloaded);
+            }
         }
     }
 

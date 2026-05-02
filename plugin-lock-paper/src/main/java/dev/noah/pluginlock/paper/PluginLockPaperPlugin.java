@@ -43,7 +43,11 @@ public final class PluginLockPaperPlugin extends JavaPlugin {
                 Path lockfile = serverRoot.resolve(PluginLockFiles.LOCK_FILE);
                 Path pluginsDirectory = serverRoot.resolve("plugins");
                 PluginLock lock = PluginLockFiles.readLock(lockfile);
-                new PluginInstaller().install(lock, pluginsDirectory);
+                new PluginInstaller().install(lock, pluginsDirectory, (fileName, downloadedBytes, totalBytes) -> {
+                    if (downloadedBytes == 0) {
+                        sender.sendMessage("Downloading " + fileName + "...");
+                    }
+                });
                 sender.sendMessage("Installed " + lock.getPlugins().size() + " locked plugin(s). Restart the server to load new jars.");
             } catch (Exception exception) {
                 getLogger().log(Level.SEVERE, "Failed to install locked plugins", exception);
