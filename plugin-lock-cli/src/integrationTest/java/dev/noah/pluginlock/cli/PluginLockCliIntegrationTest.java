@@ -627,6 +627,20 @@ class PluginLockCliIntegrationTest {
     }
 
     @Test
+    void interruptedCommandsReturnConventionalCancellationExitCode() throws Exception {
+        PluginLockFiles.writeManifest(tempDir.resolve(PluginLockFiles.MANIFEST_FILE), new PluginManifest());
+        PluginLockCli cli = new PluginLockCli(new ServerDownloads(HttpClient.newHttpClient()), manifest -> {
+            throw new InterruptedException();
+        });
+
+        CliResult result = executeCapturing(cli, tempDir, "", "lock");
+
+        assertEquals(130, result.exitCode());
+        assertTrue(result.output().contains("Operation cancelled"));
+        assertFalse(result.output().contains("Exception"));
+    }
+
+    @Test
     void listShowsEmptyLockedPluginSet() throws Exception {
         PluginLock lock = new PluginLock();
         lock.setMinecraftVersion("1.21.4");

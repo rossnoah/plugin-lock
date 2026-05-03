@@ -37,6 +37,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.Callable;
+import java.util.concurrent.atomic.AtomicBoolean;
+import sun.misc.Signal;
 
 @Command(
         name = "pl",
@@ -63,6 +65,7 @@ public final class PluginLockCli implements Callable<Integer> {
     private static final String DEFAULT_MINECRAFT_VERSION = "1.21.4";
     private static final String DEFAULT_LOADER = "paper";
     private static final String DEFAULT_SERVER_MEMORY = "2G";
+    private static final int INTERRUPTED_EXIT_CODE = 130;
 
     @Option(names = "--project-dir", defaultValue = ".", description = "Directory containing server-lock files.")
     Path projectDir;
@@ -109,7 +112,9 @@ public final class PluginLockCli implements Callable<Integer> {
     }
 
     public static void main(String[] args) {
-        int exitCode = commandLine(new PluginLockCli()).execute(args);
+        PluginLockCli cli = new PluginLockCli();
+        installCancellationHandler(cli);
+        int exitCode = commandLine(cli).execute(args);
         System.exit(exitCode);
     }
 
@@ -956,7 +961,21 @@ public final class PluginLockCli implements Callable<Integer> {
                     .directory(parent.effectiveProjectDir().toFile())
                     .inheritIO()
                     .start();
-            return process.waitFor();
+            try {
+                return process.waitFor();
+            } catch (InterruptedException exception) {
+                process.destroy();
+                try {
+                    if (!process.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)) {
+                        process.destroyForcibly();
+                    }
+                } catch (InterruptedException forceException) {
+                    process.destroyForcibly();
+                    forceException.addSuppressed(exception);
+                    throw forceException;
+                }
+                throw exception;
+            }
         }
 
         private String resolveMemory() throws Exception {
@@ -2115,8 +2134,10 @@ public final class PluginLockCli implements Callable<Integer> {
     private static final class FriendlyExecutionExceptionHandler implements CommandLine.IExecutionExceptionHandler {
         @Override
         public int handleExecutionException(Exception exception, CommandLine commandLine, ParseResult parseResult) {
-            if (exception instanceof InterruptedException) {
+            if (isInterrupted(exception)) {
                 Thread.currentThread().interrupt();
+                Output.error(rootCli(commandLine).json, "Operation cancelled");
+                return INTERRUPTED_EXIT_CODE;
             }
 
             boolean json = rootCli(commandLine).json;
@@ -2139,9 +2160,6 @@ public final class PluginLockCli implements Callable<Integer> {
                     || exception instanceof IOException) {
                 return messageOrFallback(exception);
             }
-            if (exception instanceof InterruptedException) {
-                return "Operation interrupted";
-            }
             return messageOrFallback(exception);
         }
 
@@ -2149,5 +2167,29 @@ public final class PluginLockCli implements Callable<Integer> {
             String message = exception.getMessage();
             return message == null || message.isBlank() ? exception.getClass().getSimpleName() : message;
         }
+
+        private static boolean isInterrupted(Throwable throwable) {
+            Throwable current = throwable;
+            while (current != null) {
+                if (current instanceof InterruptedException) {
+                    return true;
+                }
+                current = current.getCause();
+            }
+            return false;
+        }
+    }
+
+    private static void installCancellationHandler(PluginLockCli cli) {
+        Thread mainThread = Thread.currentThread();
+        AtomicBoolean cancelling = new AtomicBoolean();
+        Signal.handle(new Signal("INT"), signal -> {
+            if (!cancelling.compareAndSet(false, true)) {
+                Runtime.getRuntime().halt(INTERRUPTED_EXIT_CODE);
+            }
+            mainThread.interrupt();
+            Output.error(cli.json, "Operation cancelled");
+            System.exit(INTERRUPTED_EXIT_CODE);
+        });
     }
 }
