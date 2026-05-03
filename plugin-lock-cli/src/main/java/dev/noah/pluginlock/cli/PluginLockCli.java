@@ -44,7 +44,11 @@ import java.util.concurrent.Callable;
                 PluginLockCli.LockCommand.class,
                 PluginLockCli.InstallCommand.class,
                 PluginLockCli.CleanInstallCommand.class,
-                PluginLockCli.RemoveCommand.class
+                PluginLockCli.RemoveCommand.class,
+                PluginLockCli.ListCommand.class,
+                PluginLockCli.DoctorCommand.class,
+                PluginLockCli.UpdateCommand.class,
+                PluginLockCli.SearchCommand.class
         }
 )
 public final class PluginLockCli implements Callable<Integer> {
@@ -155,6 +159,30 @@ public final class PluginLockCli implements Callable<Integer> {
         PluginLock resolve(PluginManifest manifest) throws Exception;
     }
 
+    LockedServer initializeProject(String server, String minecraftVersion, boolean yes) throws Exception {
+        Path manifestPath = resolve(PluginLockFiles.MANIFEST_FILE);
+        if (Files.exists(manifestPath)) {
+            throw new IllegalStateException(PluginLockFiles.MANIFEST_FILE + " already exists");
+        }
+        String resolvedServer = chooseServer(server, DEFAULT_LOADER, yes);
+        List<String> versions = serverDownloads.versions(resolvedServer);
+        String resolvedMinecraftVersion = chooseMinecraftVersion(minecraftVersion, versions, yes);
+        LockedServer lockedServer = serverDownloads.latest(resolvedServer, resolvedMinecraftVersion);
+        serverDownloads.download(lockedServer, effectiveProjectDir(), downloadProgress());
+
+        PluginManifest manifest = new PluginManifest();
+        manifest.setMinecraftVersion(resolvedMinecraftVersion);
+        manifest.setLoader(ServerDownloads.pluginLoaderFor(resolvedServer));
+        PluginLockFiles.writeManifest(manifestPath, manifest);
+
+        PluginLock lock = new PluginLock();
+        lock.setMinecraftVersion(manifest.getMinecraftVersion());
+        lock.setLoader(manifest.getLoader());
+        lock.setServer(lockedServer);
+        PluginLockFiles.writeLock(resolve(PluginLockFiles.LOCK_FILE), lock);
+        return lockedServer;
+    }
+
     void writeLock(PluginLock lock) throws Exception {
         PluginLockFiles.writeLock(resolve(PluginLockFiles.LOCK_FILE), lock);
         lock.getPlugins().stream()
@@ -185,7 +213,30 @@ public final class PluginLockCli implements Callable<Integer> {
         throw new IllegalArgumentException("Unsupported provider: " + provider);
     }
 
+    List<PluginMetadata> searchPlugins(String provider, String query, int limit) throws Exception {
+        List<PluginMetadata> results = new ArrayList<>();
+        if ("auto".equalsIgnoreCase(provider) || "modrinth".equalsIgnoreCase(provider)) {
+            results.addAll(modrinthProvider.search(query, limit));
+        }
+        if ("auto".equalsIgnoreCase(provider) || "hangar".equalsIgnoreCase(provider)) {
+            results.addAll(hangarProvider.search(query, limit));
+        }
+        if (!"auto".equalsIgnoreCase(provider)
+                && !"modrinth".equalsIgnoreCase(provider)
+                && !"hangar".equalsIgnoreCase(provider)) {
+            throw new IllegalArgumentException("Unsupported provider: " + provider);
+        }
+        return results.stream()
+                .sorted((left, right) -> Long.compare(right.getDownloads(), left.getDownloads()))
+                .limit(limit)
+                .toList();
+    }
+
     PluginRequest selectPlugin(String provider, String id, String version, boolean assumeYes) throws Exception {
+        PluginSpec spec = PluginSpec.parse(id, provider, version);
+        provider = spec.provider();
+        id = spec.id();
+        version = spec.version();
         if (!"auto".equalsIgnoreCase(provider)) {
             if (!assumeYes) {
                 PluginMetadata metadata = fetchMetadata(provider, id);
@@ -216,6 +267,28 @@ public final class PluginLockCli implements Callable<Integer> {
             return null;
         }
         return new PluginRequest(selected.getId(), selected.getProvider(), version);
+    }
+
+    private record PluginSpec(String provider, String id, String version) {
+        static PluginSpec parse(String raw, String provider, String version) {
+            String parsedProvider = provider;
+            String parsedId = raw;
+            String parsedVersion = version;
+            int providerSeparator = raw.indexOf(':');
+            if (providerSeparator > 0) {
+                parsedProvider = raw.substring(0, providerSeparator);
+                parsedId = raw.substring(providerSeparator + 1);
+            }
+            int versionSeparator = parsedId.lastIndexOf('@');
+            if (versionSeparator > 0 && versionSeparator < parsedId.length() - 1) {
+                parsedVersion = parsedId.substring(versionSeparator + 1);
+                parsedId = parsedId.substring(0, versionSeparator);
+            }
+            if (parsedId.isBlank()) {
+                throw new IllegalArgumentException("Plugin id cannot be blank");
+            }
+            return new PluginSpec(parsedProvider, parsedId, parsedVersion);
+        }
     }
 
     private List<PluginMetadata> findProviderMatches(String id) throws Exception {
@@ -341,22 +414,8 @@ public final class PluginLockCli implements Callable<Integer> {
             if (Files.exists(manifestPath)) {
                 throw new IllegalStateException(PluginLockFiles.MANIFEST_FILE + " already exists");
             }
-            String resolvedServer = chooseServer(server, DEFAULT_LOADER, yes);
-            List<String> versions = parent.serverDownloads.versions(resolvedServer);
-            String resolvedMinecraftVersion = chooseMinecraftVersion(minecraftVersion, versions, yes);
-            LockedServer lockedServer = parent.serverDownloads.latest(resolvedServer, resolvedMinecraftVersion);
-            Path serverJar = parent.serverDownloads.download(lockedServer, parent.effectiveProjectDir(), parent.downloadProgress());
-
-            PluginManifest manifest = new PluginManifest();
-            manifest.setMinecraftVersion(resolvedMinecraftVersion);
-            manifest.setLoader(ServerDownloads.pluginLoaderFor(resolvedServer));
-            PluginLockFiles.writeManifest(manifestPath, manifest);
-
-            PluginLock lock = new PluginLock();
-            lock.setMinecraftVersion(manifest.getMinecraftVersion());
-            lock.setLoader(manifest.getLoader());
-            lock.setServer(lockedServer);
-            PluginLockFiles.writeLock(parent.resolve(PluginLockFiles.LOCK_FILE), lock);
+            LockedServer lockedServer = parent.initializeProject(server, minecraftVersion, yes);
+            PluginManifest manifest = PluginLockFiles.readManifest(manifestPath);
 
             parent.output().success("init", "Initialized " + manifest.getMinecraftVersion() + " " + lockedServer.getProvider(), Map.of(
                     "manifest", PluginLockFiles.MANIFEST_FILE,
@@ -365,7 +424,7 @@ public final class PluginLockCli implements Callable<Integer> {
                     "minecraftVersion", manifest.getMinecraftVersion(),
                     "loader", manifest.getLoader(),
                     "build", lockedServer.getBuild(),
-                    "serverJar", serverJar.getFileName().toString(),
+                    "serverJar", lockedServer.getFileName(),
                     "downloadUrl", lockedServer.getDownloadUrl(),
                     "sha256", lockedServer.getSha256() == null ? "" : lockedServer.getSha256()
             ));
@@ -498,6 +557,12 @@ public final class PluginLockCli implements Callable<Integer> {
         @Option(names = "--plugins-dir", defaultValue = "plugins", description = "Destination plugins directory.")
         Path pluginsDir;
 
+        @Option(names = "--minecraft", description = "Minecraft version for auto-init when no project files exist.")
+        String minecraftVersion;
+
+        @Option(names = "--server", description = "Server provider for auto-init when no project files exist: paper or purpur.")
+        String server;
+
         @Option(names = {"-y", "--yes"}, description = "Skip plugin metadata confirmation for new plugins.")
         boolean yes;
 
@@ -507,6 +572,10 @@ public final class PluginLockCli implements Callable<Integer> {
             PluginLock lock;
             Path manifestPath = parent.resolve(PluginLockFiles.MANIFEST_FILE);
             Path lockfilePath = parent.resolve(PluginLockFiles.LOCK_FILE);
+
+            if (!ids.isEmpty() && Files.notExists(manifestPath) && Files.notExists(lockfilePath)) {
+                parent.initializeProject(server, minecraftVersion, yes);
+            }
 
             if (!ids.isEmpty() || Files.exists(manifestPath)) {
                 PluginManifest manifest = parent.readManifestOrDefault();
@@ -560,6 +629,297 @@ public final class PluginLockCli implements Callable<Integer> {
                     "pluginsDir", resolvedPluginsDir.toString(),
                     "files", lock.getPlugins().stream().map(LockedPlugin::getFileName).toList()
             ));
+            return 0;
+        }
+    }
+
+    @Command(name = "list", aliases = "ls", mixinStandardHelpOptions = true, description = "List locked plugins.")
+    static final class ListCommand implements Callable<Integer> {
+        @ParentCommand
+        PluginLockCli parent;
+
+        @Override
+        public Integer call() throws Exception {
+            Path lockfilePath = parent.resolve(PluginLockFiles.LOCK_FILE);
+            if (Files.notExists(lockfilePath)) {
+                throw new IllegalStateException("No server-lock.lock.json found. Run `pl install` or `pl lock` first.");
+            }
+
+            PluginLock lock = PluginLockFiles.readLock(lockfilePath);
+            parent.output().list(lock);
+            return 0;
+        }
+    }
+
+    @Command(name = "doctor", mixinStandardHelpOptions = true, description = "Check project files, locked artifacts, and hashes.")
+    static final class DoctorCommand implements Callable<Integer> {
+        @ParentCommand
+        PluginLockCli parent;
+
+        @Option(names = "--plugins-dir", defaultValue = "plugins", description = "Destination plugins directory.")
+        Path pluginsDir;
+
+        @Override
+        public Integer call() throws Exception {
+            Path manifestPath = parent.resolve(PluginLockFiles.MANIFEST_FILE);
+            Path lockfilePath = parent.resolve(PluginLockFiles.LOCK_FILE);
+            Path resolvedPluginsDir = parent.pluginsDir(pluginsDir);
+            List<DoctorCheck> checks = new ArrayList<>();
+
+            PluginManifest manifest = null;
+            PluginLock lock = null;
+            if (Files.exists(manifestPath)) {
+                manifest = PluginLockFiles.readManifest(manifestPath);
+                checks.add(DoctorCheck.ok("manifest", PluginLockFiles.MANIFEST_FILE + " exists"));
+            } else {
+                checks.add(DoctorCheck.warning("manifest", PluginLockFiles.MANIFEST_FILE + " is missing"));
+            }
+            if (Files.exists(lockfilePath)) {
+                lock = PluginLockFiles.readLock(lockfilePath);
+                checks.add(DoctorCheck.ok("lockfile", PluginLockFiles.LOCK_FILE + " exists"));
+            } else {
+                checks.add(DoctorCheck.error("lockfile", PluginLockFiles.LOCK_FILE + " is missing"));
+            }
+
+            if (manifest != null && lock != null) {
+                compareProjectMetadata(manifest, lock, checks);
+                checkManifestLockCoverage(manifest, lock, checks);
+            }
+            if (lock != null) {
+                checkServerJar(parent.effectiveProjectDir(), lock, checks);
+                checkPluginJars(resolvedPluginsDir, lock, checks);
+                lock.getPlugins().stream()
+                        .map(LockedPlugin::getCompatibilityWarning)
+                        .filter(warning -> warning != null && !warning.isBlank())
+                        .forEach(warning -> checks.add(DoctorCheck.warning("compatibility", warning)));
+            }
+
+            parent.output().doctor(checks);
+            return checks.stream().anyMatch(check -> "error".equals(check.status())) ? 1 : 0;
+        }
+
+        private static void compareProjectMetadata(PluginManifest manifest, PluginLock lock, List<DoctorCheck> checks) {
+            if (same(manifest.getMinecraftVersion(), lock.getMinecraftVersion())) {
+                checks.add(DoctorCheck.ok("minecraft", "Manifest and lockfile Minecraft versions match"));
+            } else {
+                checks.add(DoctorCheck.error("minecraft", "Manifest Minecraft version " + blank(manifest.getMinecraftVersion())
+                        + " does not match lockfile " + blank(lock.getMinecraftVersion())));
+            }
+            if (same(manifest.getLoader(), lock.getLoader())) {
+                checks.add(DoctorCheck.ok("loader", "Manifest and lockfile loaders match"));
+            } else {
+                checks.add(DoctorCheck.error("loader", "Manifest loader " + blank(manifest.getLoader())
+                        + " does not match lockfile " + blank(lock.getLoader())));
+            }
+        }
+
+        private static void checkManifestLockCoverage(PluginManifest manifest, PluginLock lock, List<DoctorCheck> checks) {
+            List<String> missing = manifest.getPlugins().stream()
+                    .filter(request -> lock.getPlugins().stream().noneMatch(plugin -> same(request.getProvider(), plugin.getProvider())
+                            && same(request.getId(), plugin.getId())))
+                    .map(request -> request.getProvider() + ":" + request.getId())
+                    .toList();
+            if (missing.isEmpty()) {
+                checks.add(DoctorCheck.ok("plugins", "Lockfile covers all manifest plugins"));
+            } else {
+                checks.add(DoctorCheck.error("plugins", "Lockfile is missing manifest plugin(s): " + String.join(", ", missing)));
+            }
+        }
+
+        private static void checkServerJar(Path projectDir, PluginLock lock, List<DoctorCheck> checks) throws Exception {
+            LockedServer server = lock.getServer();
+            if (server == null || server.getFileName() == null || server.getFileName().isBlank()) {
+                checks.add(DoctorCheck.warning("server", "No locked server jar recorded"));
+                return;
+            }
+            Path jar = projectDir.resolve(server.getFileName());
+            if (Files.notExists(jar)) {
+                checks.add(DoctorCheck.error("server", "Missing server jar " + server.getFileName()));
+                return;
+            }
+            if (server.getSha256() == null || server.getSha256().isBlank()) {
+                checks.add(DoctorCheck.warning("server", "Server jar exists but no SHA-256 is recorded"));
+                return;
+            }
+            String actual = sha256(jar);
+            if (server.getSha256().equalsIgnoreCase(actual)) {
+                checks.add(DoctorCheck.ok("server", "Server jar hash matches"));
+            } else {
+                checks.add(DoctorCheck.error("server", "Server jar hash mismatch for " + server.getFileName()));
+            }
+        }
+
+        private static void checkPluginJars(Path pluginsDir, PluginLock lock, List<DoctorCheck> checks) throws Exception {
+            if (lock.getPlugins().isEmpty()) {
+                checks.add(DoctorCheck.ok("plugins", "No locked plugins"));
+                return;
+            }
+            for (LockedPlugin plugin : lock.getPlugins()) {
+                Path jar = pluginsDir.resolve(plugin.getFileName());
+                String label = plugin.getProvider() + ":" + plugin.getId();
+                if (Files.notExists(jar)) {
+                    checks.add(DoctorCheck.error("plugin", "Missing plugin jar " + plugin.getFileName() + " for " + label));
+                    continue;
+                }
+                if (plugin.getSha512() != null && !plugin.getSha512().isBlank()) {
+                    String actual = PluginInstaller.sha512(jar);
+                    checks.add(plugin.getSha512().equalsIgnoreCase(actual)
+                            ? DoctorCheck.ok("plugin", label + " hash matches")
+                            : DoctorCheck.error("plugin", label + " SHA-512 mismatch"));
+                } else if (plugin.getSha256() != null && !plugin.getSha256().isBlank()) {
+                    String actual = sha256(jar);
+                    checks.add(plugin.getSha256().equalsIgnoreCase(actual)
+                            ? DoctorCheck.ok("plugin", label + " hash matches")
+                            : DoctorCheck.error("plugin", label + " SHA-256 mismatch"));
+                } else {
+                    checks.add(DoctorCheck.warning("plugin", label + " has no supported recorded hash"));
+                }
+            }
+        }
+
+        private static String sha256(Path path) throws Exception {
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            try (var input = new java.security.DigestInputStream(Files.newInputStream(path), digest)) {
+                input.transferTo(java.io.OutputStream.nullOutputStream());
+            }
+            return java.util.HexFormat.of().formatHex(digest.digest());
+        }
+
+        private static boolean same(String left, String right) {
+            return blank(left).equalsIgnoreCase(blank(right));
+        }
+
+        private static String blank(String value) {
+            return value == null ? "" : value;
+        }
+    }
+
+    private record DoctorCheck(String status, String check, String message) {
+        static DoctorCheck ok(String check, String message) {
+            return new DoctorCheck("ok", check, message);
+        }
+
+        static DoctorCheck warning(String check, String message) {
+            return new DoctorCheck("warning", check, message);
+        }
+
+        static DoctorCheck error(String check, String message) {
+            return new DoctorCheck("error", check, message);
+        }
+    }
+
+    @Command(name = "update", mixinStandardHelpOptions = true, description = "Update locked plugin versions from the manifest.")
+    static final class UpdateCommand implements Callable<Integer> {
+        @ParentCommand
+        PluginLockCli parent;
+
+        @Parameters(arity = "0..*", description = "Optional plugin ids, names, or files to update.")
+        List<String> ids = List.of();
+
+        @Option(names = "--server", description = "Update the locked server build and download the server jar.")
+        boolean server;
+
+        @Override
+        public Integer call() throws Exception {
+            Path manifestPath = parent.resolve(PluginLockFiles.MANIFEST_FILE);
+            if (Files.notExists(manifestPath)) {
+                throw new IllegalStateException("No server-lock.json found. Run `pl init` first.");
+            }
+            PluginManifest manifest = PluginLockFiles.readManifest(manifestPath);
+            PluginLock existing = Files.exists(parent.resolve(PluginLockFiles.LOCK_FILE))
+                    ? PluginLockFiles.readLock(parent.resolve(PluginLockFiles.LOCK_FILE))
+                    : null;
+            PluginLock resolved = parent.resolveLock(manifest);
+            PluginLock updated = ids.isEmpty() || existing == null
+                    ? resolved
+                    : mergeSelectedUpdates(existing, resolved, ids);
+            if (server) {
+                LockedServer lockedServer = latestServer(parent, manifest, existing);
+                parent.serverDownloads.download(lockedServer, parent.effectiveProjectDir(), parent.downloadProgress());
+                updated.setServer(lockedServer);
+            }
+            parent.writeLock(updated);
+            parent.output().success("update", updateMessage(ids, server, updated), Map.of(
+                    "count", updated.getPlugins().size(),
+                    "updated", ids,
+                    "server", server,
+                    "plugins", updated.getPlugins().stream().map(LockedPlugin::getId).toList()
+            ));
+            return 0;
+        }
+
+        private static LockedServer latestServer(PluginLockCli parent, PluginManifest manifest, PluginLock existing)
+                throws Exception {
+            String provider = existing != null && existing.getServer() != null
+                    ? existing.getServer().getProvider()
+                    : manifest.getLoader();
+            if (provider == null || provider.isBlank()) {
+                provider = DEFAULT_LOADER;
+            }
+            return parent.serverDownloads.latest(provider, manifest.getMinecraftVersion());
+        }
+
+        private static PluginLock mergeSelectedUpdates(PluginLock existing, PluginLock resolved, List<String> ids) {
+            Map<String, LockedPlugin> resolvedByKey = new LinkedHashMap<>();
+            for (LockedPlugin plugin : resolved.getPlugins()) {
+                resolvedByKey.put(pluginKey(plugin), plugin);
+            }
+            List<LockedPlugin> mergedPlugins = new ArrayList<>();
+            for (LockedPlugin plugin : existing.getPlugins()) {
+                LockedPlugin replacement = resolvedByKey.get(pluginKey(plugin));
+                mergedPlugins.add(replacement != null && matchesLockedPlugin(ids, plugin) ? replacement : plugin);
+            }
+            for (LockedPlugin plugin : resolved.getPlugins()) {
+                boolean alreadyPresent = mergedPlugins.stream().anyMatch(existingPlugin -> pluginKey(existingPlugin).equals(pluginKey(plugin)));
+                if (!alreadyPresent && matchesLockedPlugin(ids, plugin)) {
+                    mergedPlugins.add(plugin);
+                }
+            }
+            existing.setMinecraftVersion(resolved.getMinecraftVersion());
+            existing.setLoader(resolved.getLoader());
+            existing.setPlugins(mergedPlugins);
+            return existing;
+        }
+
+        private static String pluginKey(LockedPlugin plugin) {
+            return blank(plugin.getProvider()).toLowerCase(Locale.ROOT) + ":" + blank(plugin.getId()).toLowerCase(Locale.ROOT);
+        }
+
+        private static String updateMessage(List<String> ids, boolean server, PluginLock lock) {
+            if (server && ids.isEmpty()) {
+                return "Updated server and " + lock.getPlugins().size() + " plugin(s)";
+            }
+            if (server) {
+                return "Updated server and " + ids.size() + " requested plugin(s)";
+            }
+            return ids.isEmpty()
+                    ? "Updated " + lock.getPlugins().size() + " plugin(s)"
+                    : "Updated " + ids.size() + " requested plugin(s)";
+        }
+
+        private static String blank(String value) {
+            return value == null ? "" : value;
+        }
+    }
+
+    @Command(name = "search", mixinStandardHelpOptions = true, description = "Search plugin providers.")
+    static final class SearchCommand implements Callable<Integer> {
+        @ParentCommand
+        PluginLockCli parent;
+
+        @Parameters(index = "0", description = "Search query.")
+        String query;
+
+        @Option(names = "--provider", defaultValue = "auto", description = "Plugin provider: auto, modrinth, or hangar.")
+        String provider;
+
+        @Option(names = "--limit", defaultValue = "10", description = "Maximum results to show.")
+        int limit;
+
+        @Override
+        public Integer call() throws Exception {
+            List<PluginMetadata> results = parent.searchPlugins(provider, query, Math.max(1, limit));
+            parent.output().search(query, results);
             return 0;
         }
     }
@@ -677,6 +1037,100 @@ public final class PluginLockCli implements Callable<Integer> {
             System.err.println(Ansi.yellow("Warning: ") + message);
         }
 
+        void list(PluginLock lock) {
+            if (json) {
+                writeJson(Map.of(
+                        "status", "success",
+                        "command", "list",
+                        "minecraftVersion", nullToBlank(lock.getMinecraftVersion()),
+                        "loader", nullToBlank(lock.getLoader()),
+                        "server", serverDetails(lock),
+                        "plugins", lock.getPlugins().stream()
+                                .map(Output::pluginDetails)
+                                .toList()
+                ));
+                return;
+            }
+
+            System.out.println(Ansi.bold("Minecraft: ") + nullToBlank(lock.getMinecraftVersion())
+                    + "  " + Ansi.bold("Loader: ") + nullToBlank(lock.getLoader()));
+            if (lock.getServer() != null) {
+                System.out.println(Ansi.bold("Server: ") + nullToBlank(lock.getServer().getProvider())
+                        + " " + nullToBlank(lock.getServer().getMinecraftVersion())
+                        + " build " + nullToBlank(lock.getServer().getBuild())
+                        + " (" + nullToBlank(lock.getServer().getFileName()) + ")");
+            }
+            if (lock.getPlugins().isEmpty()) {
+                System.out.println("No locked plugins.");
+                return;
+            }
+            System.out.println();
+            for (LockedPlugin plugin : lock.getPlugins()) {
+                System.out.println(Ansi.blue(plugin.getProvider() + ":" + plugin.getId())
+                        + "  " + nullToBlank(plugin.getName())
+                        + "  " + nullToBlank(plugin.getVersionName())
+                        + "  " + Ansi.dim(nullToBlank(plugin.getFileName())));
+                if (plugin.getCompatibilityWarning() != null && !plugin.getCompatibilityWarning().isBlank()) {
+                    System.out.println(Ansi.yellow("  Warning: ") + plugin.getCompatibilityWarning());
+                }
+            }
+        }
+
+        void doctor(List<DoctorCheck> checks) {
+            if (json) {
+                writeJson(Map.of(
+                        "status", checks.stream().anyMatch(check -> "error".equals(check.status())) ? "error" : "success",
+                        "command", "doctor",
+                        "checks", checks.stream()
+                                .map(check -> Map.of(
+                                        "status", check.status(),
+                                        "check", check.check(),
+                                        "message", check.message()))
+                                .toList()
+                ));
+                return;
+            }
+            for (DoctorCheck check : checks) {
+                String marker = switch (check.status()) {
+                    case "ok" -> Ansi.green("OK");
+                    case "warning" -> Ansi.yellow("WARN");
+                    default -> Ansi.red("FAIL");
+                };
+                System.out.println(marker + " " + check.message());
+            }
+        }
+
+        void search(String query, List<PluginMetadata> results) {
+            if (json) {
+                writeJson(Map.of(
+                        "status", "success",
+                        "command", "search",
+                        "query", query,
+                        "results", results.stream()
+                                .map(metadata -> Map.of(
+                                        "provider", metadata.getProvider(),
+                                        "id", metadata.getId(),
+                                        "name", metadata.getName(),
+                                        "description", metadata.getDescription() == null ? "" : metadata.getDescription(),
+                                        "downloads", metadata.getDownloads()))
+                                .toList()
+                ));
+                return;
+            }
+            if (results.isEmpty()) {
+                System.out.println("No plugin matches found for " + query);
+                return;
+            }
+            for (PluginMetadata metadata : results) {
+                System.out.println(Ansi.blue(metadata.getProvider() + ":" + metadata.getId())
+                        + "  " + metadata.getName()
+                        + "  " + Ansi.dim(String.format(Locale.US, "%,d downloads", metadata.getDownloads())));
+                if (metadata.getDescription() != null && !metadata.getDescription().isBlank()) {
+                    System.out.println(Ansi.dim("  " + metadata.getDescription()));
+                }
+            }
+        }
+
         static void error(boolean json, String message) {
             if (json) {
                 writeJson(Map.of(
@@ -694,6 +1148,37 @@ public final class PluginLockCli implements Callable<Integer> {
             } catch (Exception exception) {
                 throw new IllegalStateException("Failed to write JSON output", exception);
             }
+        }
+
+        private static Map<String, ?> serverDetails(PluginLock lock) {
+            if (lock.getServer() == null) {
+                return Map.of();
+            }
+            return Map.of(
+                    "provider", nullToBlank(lock.getServer().getProvider()),
+                    "minecraftVersion", nullToBlank(lock.getServer().getMinecraftVersion()),
+                    "build", nullToBlank(lock.getServer().getBuild()),
+                    "fileName", nullToBlank(lock.getServer().getFileName())
+            );
+        }
+
+        private static Map<String, ?> pluginDetails(LockedPlugin plugin) {
+            Map<String, Object> details = new LinkedHashMap<>();
+            details.put("provider", nullToBlank(plugin.getProvider()));
+            details.put("id", nullToBlank(plugin.getId()));
+            details.put("name", nullToBlank(plugin.getName()));
+            details.put("version", nullToBlank(plugin.getVersionName()));
+            details.put("versionId", nullToBlank(plugin.getVersionId()));
+            details.put("fileName", nullToBlank(plugin.getFileName()));
+            details.put("size", plugin.getSize());
+            if (plugin.getCompatibilityWarning() != null && !plugin.getCompatibilityWarning().isBlank()) {
+                details.put("compatibilityWarning", plugin.getCompatibilityWarning());
+            }
+            return details;
+        }
+
+        private static String nullToBlank(String value) {
+            return value == null ? "" : value;
         }
     }
 

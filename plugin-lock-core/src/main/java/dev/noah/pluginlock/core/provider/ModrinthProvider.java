@@ -71,6 +71,23 @@ public final class ModrinthProvider {
         return metadata;
     }
 
+    public List<PluginMetadata> search(String query, int limit) throws IOException, InterruptedException {
+        JsonNode hits = get("search?query=" + query(query)
+                + "&limit=" + limit
+                + "&facets=%5B%5B%22project_type%3Aplugin%22%5D%5D").path("hits");
+        List<PluginMetadata> results = new ArrayList<>();
+        for (JsonNode hit : hits) {
+            PluginMetadata metadata = new PluginMetadata();
+            metadata.setId(hit.path("slug").asText(hit.path("project_id").asText()));
+            metadata.setProvider("modrinth");
+            metadata.setName(hit.path("title").asText(metadata.getId()));
+            metadata.setDescription(hit.path("description").asText(""));
+            metadata.setDownloads(hit.path("downloads").asLong());
+            results.add(metadata);
+        }
+        return results;
+    }
+
     private static void ensurePluginProject(JsonNode project, String id) throws PluginNotFoundException {
         if (!hasPluginLoader(project)) {
             throw new PluginNotFoundException("Modrinth plugin catalog", id);

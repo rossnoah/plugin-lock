@@ -191,6 +191,45 @@ class PluginLockCliIntegrationTest {
     }
 
     @Test
+    void addAcceptsProviderAndVersionShorthand() throws Exception {
+        assertEquals(0, execute(tempDir, "add", "hangar:PlaceholderAPI@2.11.6", "--yes"));
+
+        PluginManifest manifest = PluginLockFiles.readManifest(tempDir.resolve(PluginLockFiles.MANIFEST_FILE));
+        assertEquals(1, manifest.getPlugins().size());
+        assertEquals("hangar", manifest.getPlugins().getFirst().getProvider());
+        assertEquals("PlaceholderAPI", manifest.getPlugins().getFirst().getId());
+        assertEquals("2.11.6", manifest.getPlugins().getFirst().getVersion());
+    }
+
+    @Test
+    void addAcceptsVersionShorthandWithoutProvider() throws Exception {
+        assertEquals(0, execute(tempDir, "add", "luckperms@5.4.0", "--provider", "modrinth", "--yes"));
+
+        PluginManifest manifest = PluginLockFiles.readManifest(tempDir.resolve(PluginLockFiles.MANIFEST_FILE));
+        assertEquals("modrinth", manifest.getPlugins().getFirst().getProvider());
+        assertEquals("luckperms", manifest.getPlugins().getFirst().getId());
+        assertEquals("5.4.0", manifest.getPlugins().getFirst().getVersion());
+    }
+
+    @Test
+    void addProviderShorthandOverridesProviderOption() throws Exception {
+        assertEquals(0, execute(tempDir, "add", "hangar:Chunky", "--provider", "modrinth", "--yes"));
+
+        PluginManifest manifest = PluginLockFiles.readManifest(tempDir.resolve(PluginLockFiles.MANIFEST_FILE));
+        assertEquals("hangar", manifest.getPlugins().getFirst().getProvider());
+        assertEquals("Chunky", manifest.getPlugins().getFirst().getId());
+    }
+
+    @Test
+    void addRejectsBlankPluginIdFromProviderShorthand() {
+        CliResult result = executeCapturing(tempDir, "add", "modrinth:", "--yes");
+
+        assertEquals(1, result.exitCode());
+        assertTrue(result.output().contains("Plugin id cannot be blank"));
+        assertFalse(result.output().contains("Exception"));
+    }
+
+    @Test
     void installReadsLockfileAndWritesPluginDirectory() throws Exception {
         Path source = tempDir.resolve("source.jar");
         Files.writeString(source, "jar body");
@@ -205,6 +244,31 @@ class PluginLockCliIntegrationTest {
 
         assertEquals(0, exitCode);
         assertTrue(Files.exists(tempDir.resolve("plugins/local.jar")));
+    }
+
+    @Test
+    void installWithPluginAutoInitializesEmptyProject() throws Exception {
+        Path source = tempDir.resolve("source.jar");
+        Files.writeString(source, "jar body");
+
+        try (ApiServer server = apiServer()) {
+            PluginLockCli cli = new PluginLockCli(new ServerDownloads(HttpClient.newHttpClient(), server.paperBaseUri(), server.purpurBaseUri()), manifest -> {
+                PluginLock lock = new PluginLock();
+                lock.setMinecraftVersion(manifest.getMinecraftVersion());
+                lock.setLoader(manifest.getLoader());
+                lock.setPlugins(java.util.List.of(lockedPlugin("local", "local.jar", source)));
+                return lock;
+            });
+
+            CliResult result = executeCapturing(cli, tempDir, "", "install", "local", "--provider", "modrinth",
+                    "--minecraft", "1.21.4", "--server", "paper", "--yes");
+
+            assertEquals(0, result.exitCode());
+            assertTrue(Files.exists(tempDir.resolve(PluginLockFiles.MANIFEST_FILE)));
+            assertTrue(Files.exists(tempDir.resolve(PluginLockFiles.LOCK_FILE)));
+            assertEquals("paper 1.21.4 jar", Files.readString(tempDir.resolve("paper-1.21.4-101.jar")));
+            assertTrue(Files.exists(tempDir.resolve("plugins/local.jar")));
+        }
     }
 
     @Test
@@ -249,6 +313,296 @@ class PluginLockCliIntegrationTest {
 
         assertEquals(0, exitCode);
         assertEquals("clean jar body", Files.readString(installed));
+    }
+
+    @Test
+    void listShowsLockedServerAndPlugins() throws Exception {
+        Path source = tempDir.resolve("source.jar");
+        Files.writeString(source, "jar body");
+
+        PluginLock lock = new PluginLock();
+        lock.setMinecraftVersion("1.21.4");
+        lock.setLoader("paper");
+        dev.noah.pluginlock.core.model.LockedServer server = new dev.noah.pluginlock.core.model.LockedServer();
+        server.setProvider("paper");
+        server.setMinecraftVersion("1.21.4");
+        server.setBuild("101");
+        server.setFileName("paper-1.21.4-101.jar");
+        lock.setServer(server);
+        LockedPlugin plugin = lockedPlugin("luckperms", "LuckPerms-Bukkit-5.5.17.jar", source);
+        plugin.setName("LuckPerms");
+        plugin.setVersionName("5.5.17");
+        lock.setPlugins(java.util.List.of(plugin));
+        PluginLockFiles.writeLock(tempDir.resolve(PluginLockFiles.LOCK_FILE), lock);
+
+        CliResult result = executeCapturing(tempDir, "list");
+
+        assertEquals(0, result.exitCode());
+        assertTrue(result.output().contains("Minecraft: 1.21.4"));
+        assertTrue(result.output().contains("Server: paper 1.21.4 build 101 (paper-1.21.4-101.jar)"));
+        assertTrue(result.output().contains("modrinth:luckperms"));
+        assertTrue(result.output().contains("LuckPerms"));
+        assertTrue(result.output().contains("5.5.17"));
+        assertTrue(result.output().contains("LuckPerms-Bukkit-5.5.17.jar"));
+    }
+
+    @Test
+    void listJsonIncludesLockedPlugins() throws Exception {
+        writeSingleLockedPlugin("local", "local.jar");
+
+        CliResult result = executeCapturing(tempDir, "--json", "list");
+
+        assertEquals(0, result.exitCode());
+        assertTrue(result.output().contains("\"status\":\"success\""));
+        assertTrue(result.output().contains("\"command\":\"list\""));
+        assertTrue(result.output().contains("\"plugins\":["));
+        assertTrue(result.output().contains("\"id\":\"local\""));
+        assertTrue(result.output().contains("\"fileName\":\"local.jar\""));
+    }
+
+    @Test
+    void listFailsCleanlyWhenLockfileIsMissing() {
+        CliResult result = executeCapturing(tempDir, "list");
+
+        assertEquals(1, result.exitCode());
+        assertTrue(result.output().contains("No server-lock.lock.json found"));
+        assertFalse(result.output().contains("Exception"));
+    }
+
+    @Test
+    void listShowsEmptyLockedPluginSet() throws Exception {
+        PluginLock lock = new PluginLock();
+        lock.setMinecraftVersion("1.21.4");
+        lock.setLoader("paper");
+        PluginLockFiles.writeLock(tempDir.resolve(PluginLockFiles.LOCK_FILE), lock);
+
+        CliResult result = executeCapturing(tempDir, "list");
+
+        assertEquals(0, result.exitCode());
+        assertTrue(result.output().contains("No locked plugins."));
+    }
+
+    @Test
+    void doctorPassesWhenLockfileArtifactsMatch() throws Exception {
+        Path pluginsDir = tempDir.resolve("plugins");
+        Files.createDirectories(pluginsDir);
+        Files.writeString(pluginsDir.resolve("local.jar"), "jar body");
+
+        PluginManifest manifest = new PluginManifest();
+        manifest.setMinecraftVersion("1.21.4");
+        manifest.setLoader("paper");
+        manifest.setPlugins(java.util.List.of(new dev.noah.pluginlock.core.model.PluginRequest("local", "modrinth", "latest")));
+        PluginLockFiles.writeManifest(tempDir.resolve(PluginLockFiles.MANIFEST_FILE), manifest);
+
+        PluginLock lock = new PluginLock();
+        lock.setMinecraftVersion("1.21.4");
+        lock.setLoader("paper");
+        lock.setPlugins(java.util.List.of(lockedPlugin("local", "local.jar", pluginsDir.resolve("local.jar"))));
+        PluginLockFiles.writeLock(tempDir.resolve(PluginLockFiles.LOCK_FILE), lock);
+
+        CliResult result = executeCapturing(tempDir, "doctor");
+
+        assertEquals(0, result.exitCode());
+        assertTrue(result.output().contains("OK server-lock.json exists"));
+        assertTrue(result.output().contains("OK modrinth:local hash matches"));
+        assertFalse(result.output().contains("FAIL"));
+    }
+
+    @Test
+    void doctorFailsWhenLockedPluginJarIsMissing() throws Exception {
+        writeSingleLockedPlugin("local", "local.jar");
+        Files.delete(tempDir.resolve("plugins/local.jar"));
+
+        CliResult result = executeCapturing(tempDir, "doctor");
+
+        assertEquals(1, result.exitCode());
+        assertTrue(result.output().contains("FAIL Missing plugin jar local.jar for modrinth:local"));
+    }
+
+    @Test
+    void doctorFailsWhenManifestAndLockfileMinecraftVersionDiffer() throws Exception {
+        PluginManifest manifest = new PluginManifest();
+        manifest.setMinecraftVersion("1.21.4");
+        manifest.setLoader("paper");
+        PluginLockFiles.writeManifest(tempDir.resolve(PluginLockFiles.MANIFEST_FILE), manifest);
+
+        PluginLock lock = new PluginLock();
+        lock.setMinecraftVersion("1.20.6");
+        lock.setLoader("paper");
+        PluginLockFiles.writeLock(tempDir.resolve(PluginLockFiles.LOCK_FILE), lock);
+
+        CliResult result = executeCapturing(tempDir, "doctor");
+
+        assertEquals(1, result.exitCode());
+        assertTrue(result.output().contains("FAIL Manifest Minecraft version 1.21.4 does not match lockfile 1.20.6"));
+    }
+
+    @Test
+    void doctorFailsWhenPluginHashMismatches() throws Exception {
+        Path pluginsDir = tempDir.resolve("plugins");
+        Files.createDirectories(pluginsDir);
+        Path source = pluginsDir.resolve("local.jar");
+        Files.writeString(source, "original jar");
+        PluginLock lock = new PluginLock();
+        lock.setPlugins(java.util.List.of(lockedPlugin("local", "local.jar", source)));
+        PluginLockFiles.writeLock(tempDir.resolve(PluginLockFiles.LOCK_FILE), lock);
+        Files.writeString(source, "tampered jar");
+
+        CliResult result = executeCapturing(tempDir, "doctor");
+
+        assertEquals(1, result.exitCode());
+        assertTrue(result.output().contains("FAIL modrinth:local SHA-512 mismatch"));
+    }
+
+    @Test
+    void doctorJsonIncludesFailureStatusAndChecks() throws Exception {
+        writeSingleLockedPlugin("local", "local.jar");
+        Files.delete(tempDir.resolve("plugins/local.jar"));
+
+        CliResult result = executeCapturing(tempDir, "--json", "doctor");
+
+        assertEquals(1, result.exitCode());
+        assertTrue(result.output().contains("\"status\":\"error\""));
+        assertTrue(result.output().contains("\"command\":\"doctor\""));
+        assertTrue(result.output().contains("\"check\":\"plugin\""));
+    }
+
+    @Test
+    void doctorFailsWhenServerJarHashMismatches() throws Exception {
+        Files.writeString(tempDir.resolve("paper.jar"), "tampered");
+        PluginLock lock = new PluginLock();
+        dev.noah.pluginlock.core.model.LockedServer server = new dev.noah.pluginlock.core.model.LockedServer();
+        server.setProvider("paper");
+        server.setMinecraftVersion("1.21.4");
+        server.setBuild("101");
+        server.setFileName("paper.jar");
+        server.setSha256(sha256("expected"));
+        lock.setServer(server);
+        PluginLockFiles.writeLock(tempDir.resolve(PluginLockFiles.LOCK_FILE), lock);
+
+        CliResult result = executeCapturing(tempDir, "doctor");
+
+        assertEquals(1, result.exitCode());
+        assertTrue(result.output().contains("FAIL Server jar hash mismatch for paper.jar"));
+    }
+
+    @Test
+    void updateRewritesLockfileFromManifest() throws Exception {
+        PluginManifest manifest = new PluginManifest();
+        manifest.setMinecraftVersion("1.21.4");
+        manifest.setLoader("paper");
+        manifest.setPlugins(java.util.List.of(new dev.noah.pluginlock.core.model.PluginRequest("local", "modrinth", "latest")));
+        PluginLockFiles.writeManifest(tempDir.resolve(PluginLockFiles.MANIFEST_FILE), manifest);
+
+        LockedPlugin resolvedPlugin = new LockedPlugin();
+        resolvedPlugin.setId("local");
+        resolvedPlugin.setProvider("modrinth");
+        resolvedPlugin.setName("Local");
+        resolvedPlugin.setVersionName("2.0.0");
+        PluginLockCli cli = new PluginLockCli(new ServerDownloads(HttpClient.newHttpClient()), ignored -> {
+            PluginLock lock = new PluginLock();
+            lock.setMinecraftVersion("1.21.4");
+            lock.setLoader("paper");
+            lock.setPlugins(java.util.List.of(resolvedPlugin));
+            return lock;
+        });
+
+        CliResult result = executeCapturing(cli, tempDir, "", "update");
+
+        assertEquals(0, result.exitCode());
+        assertTrue(result.output().contains("Updated 1 plugin(s)"));
+        assertEquals("2.0.0", PluginLockFiles.readLock(tempDir.resolve(PluginLockFiles.LOCK_FILE)).getPlugins().getFirst().getVersionName());
+    }
+
+    @Test
+    void updateSelectedPluginPreservesUnselectedLockedPlugin() throws Exception {
+        PluginManifest manifest = new PluginManifest();
+        manifest.setMinecraftVersion("1.21.4");
+        manifest.setLoader("paper");
+        manifest.setPlugins(java.util.List.of(
+                new dev.noah.pluginlock.core.model.PluginRequest("update-me", "modrinth", "latest"),
+                new dev.noah.pluginlock.core.model.PluginRequest("keep-me", "modrinth", "latest")));
+        PluginLockFiles.writeManifest(tempDir.resolve(PluginLockFiles.MANIFEST_FILE), manifest);
+
+        LockedPlugin oldUpdate = pluginRecord("update-me", "1.0.0");
+        LockedPlugin oldKeep = pluginRecord("keep-me", "1.0.0");
+        PluginLock existing = new PluginLock();
+        existing.setPlugins(java.util.List.of(oldUpdate, oldKeep));
+        PluginLockFiles.writeLock(tempDir.resolve(PluginLockFiles.LOCK_FILE), existing);
+
+        PluginLockCli cli = new PluginLockCli(new ServerDownloads(HttpClient.newHttpClient()), ignored -> {
+            PluginLock lock = new PluginLock();
+            lock.setMinecraftVersion("1.21.4");
+            lock.setLoader("paper");
+            lock.setPlugins(java.util.List.of(pluginRecord("update-me", "2.0.0"), pluginRecord("keep-me", "2.0.0")));
+            return lock;
+        });
+
+        CliResult result = executeCapturing(cli, tempDir, "", "update", "update-me");
+        PluginLock updated = PluginLockFiles.readLock(tempDir.resolve(PluginLockFiles.LOCK_FILE));
+
+        assertEquals(0, result.exitCode());
+        assertEquals("2.0.0", updated.getPlugins().get(0).getVersionName());
+        assertEquals("1.0.0", updated.getPlugins().get(1).getVersionName());
+    }
+
+    @Test
+    void updateFailsCleanlyWhenManifestIsMissing() {
+        CliResult result = executeCapturing(tempDir, "update");
+
+        assertEquals(1, result.exitCode());
+        assertTrue(result.output().contains("No server-lock.json found"));
+        assertFalse(result.output().contains("Exception"));
+    }
+
+    @Test
+    void updateServerRefreshesLockedServerAndDownloadsJar() throws Exception {
+        PluginManifest manifest = new PluginManifest();
+        manifest.setMinecraftVersion("1.21.4");
+        manifest.setLoader("paper");
+        PluginLockFiles.writeManifest(tempDir.resolve(PluginLockFiles.MANIFEST_FILE), manifest);
+        PluginLockFiles.writeLock(tempDir.resolve(PluginLockFiles.LOCK_FILE), new PluginLock());
+
+        try (ApiServer server = apiServer()) {
+            CliResult result = executeCapturingWithApi(server, tempDir, "update", "--server");
+
+            PluginLock lock = PluginLockFiles.readLock(tempDir.resolve(PluginLockFiles.LOCK_FILE));
+            assertEquals(0, result.exitCode());
+            assertEquals("101", lock.getServer().getBuild());
+            assertEquals("paper 1.21.4 jar", Files.readString(tempDir.resolve("paper-1.21.4-101.jar")));
+            assertTrue(result.output().contains("Updated server and 0 plugin(s)"));
+        }
+    }
+
+    @Test
+    void updateServerUsesExistingLockedServerProvider() throws Exception {
+        PluginManifest manifest = new PluginManifest();
+        manifest.setMinecraftVersion("1.21.11");
+        manifest.setLoader("paper");
+        PluginLockFiles.writeManifest(tempDir.resolve(PluginLockFiles.MANIFEST_FILE), manifest);
+        PluginLock existing = new PluginLock();
+        dev.noah.pluginlock.core.model.LockedServer lockedServer = new dev.noah.pluginlock.core.model.LockedServer();
+        lockedServer.setProvider("purpur");
+        existing.setServer(lockedServer);
+        PluginLockFiles.writeLock(tempDir.resolve(PluginLockFiles.LOCK_FILE), existing);
+
+        try (ApiServer server = apiServer()) {
+            CliResult result = executeCapturingWithApi(server, tempDir, "update", "--server");
+
+            PluginLock lock = PluginLockFiles.readLock(tempDir.resolve(PluginLockFiles.LOCK_FILE));
+            assertEquals(0, result.exitCode());
+            assertEquals("purpur", lock.getServer().getProvider());
+            assertEquals("3333", lock.getServer().getBuild());
+            assertEquals("purpur 1.21.11 jar", Files.readString(tempDir.resolve("purpur-1.21.11-3333.jar")));
+        }
+    }
+
+    @Test
+    void searchRejectsUnsupportedProviderWithoutNetwork() {
+        CliResult result = executeCapturing(tempDir, "search", "luckperms", "--provider", "unknown");
+
+        assertEquals(1, result.exitCode());
+        assertTrue(result.output().contains("Unsupported provider: unknown"));
     }
 
     @Test
@@ -475,6 +829,16 @@ class PluginLockCliIntegrationTest {
         plugin.setFileName(fileName);
         plugin.setDownloadUrl(source.toUri().toString());
         plugin.setSha512(dev.noah.pluginlock.core.PluginInstaller.sha512(source));
+        return plugin;
+    }
+
+    private static LockedPlugin pluginRecord(String id, String version) {
+        LockedPlugin plugin = new LockedPlugin();
+        plugin.setId(id);
+        plugin.setProvider("modrinth");
+        plugin.setName(id);
+        plugin.setVersionName(version);
+        plugin.setFileName(id + ".jar");
         return plugin;
     }
 

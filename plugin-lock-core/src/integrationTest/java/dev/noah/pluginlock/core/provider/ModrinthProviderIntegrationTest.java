@@ -209,6 +209,56 @@ class ModrinthProviderIntegrationTest {
     }
 
     @Test
+    void searchesPluginProjectsAgainstFakeApi() throws Exception {
+        try (TestHttpServer server = new TestHttpServer()) {
+            server.json("/search?query=luck&limit=2&facets=%5B%5B%22project_type%3Aplugin%22%5D%5D", """
+                    {
+                      "hits":[
+                        {
+                          "slug":"luckperms",
+                          "project_id":"project-1",
+                          "title":"LuckPerms",
+                          "description":"A permissions plugin",
+                          "downloads":123456
+                        },
+                        {
+                          "slug":"lucky",
+                          "project_id":"project-2",
+                          "title":"Lucky",
+                          "description":"A luck plugin",
+                          "downloads":42
+                        }
+                      ]
+                    }
+                    """);
+
+            java.util.List<PluginMetadata> results = new ModrinthProvider(HttpClient.newHttpClient(), server.baseUri())
+                    .search("luck", 2);
+
+            assertEquals(2, results.size());
+            assertEquals("modrinth", results.getFirst().getProvider());
+            assertEquals("luckperms", results.getFirst().getId());
+            assertEquals("LuckPerms", results.getFirst().getName());
+            assertEquals("A permissions plugin", results.getFirst().getDescription());
+            assertEquals(123456, results.getFirst().getDownloads());
+        }
+    }
+
+    @Test
+    void searchUrlEncodesQueriesAgainstFakeApi() throws Exception {
+        try (TestHttpServer server = new TestHttpServer()) {
+            server.json("/search?query=via+version&limit=1&facets=%5B%5B%22project_type%3Aplugin%22%5D%5D", """
+                    {"hits":[]}
+                    """);
+
+            java.util.List<PluginMetadata> results = new ModrinthProvider(HttpClient.newHttpClient(), server.baseUri())
+                    .search("via version", 1);
+
+            assertTrue(results.isEmpty());
+        }
+    }
+
+    @Test
     void doesNotResolveNonPluginProjectAgainstFakeApi() throws Exception {
         try (TestHttpServer server = new TestHttpServer()) {
             server.json("/project/demo-mod", """

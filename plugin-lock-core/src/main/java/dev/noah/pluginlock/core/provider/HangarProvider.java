@@ -73,6 +73,22 @@ public final class HangarProvider {
         return metadata;
     }
 
+    public List<PluginMetadata> search(String query, int limit) throws IOException, InterruptedException {
+        JsonNode result = get("projects?query=" + query(query) + "&limit=" + limit).path("result");
+        java.util.ArrayList<PluginMetadata> results = new java.util.ArrayList<>();
+        for (JsonNode project : result) {
+            PluginMetadata metadata = new PluginMetadata();
+            metadata.setId(project.path("namespace").path("slug").asText(project.path("name").asText()));
+            metadata.setProvider("hangar");
+            metadata.setName(project.path("name").asText(metadata.getId()));
+            metadata.setDescription(project.path("description").asText(""));
+            metadata.setDownloads(project.path("stats").path("downloads").asLong());
+            metadata.setAuthors(memberNames(project));
+            results.add(metadata);
+        }
+        return results;
+    }
+
     private JsonNode project(String id) throws IOException, InterruptedException {
         try {
             return get("projects/" + projectPath(id), id);

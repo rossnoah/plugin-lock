@@ -235,6 +235,46 @@ class HangarProviderIntegrationTest {
         }
     }
 
+    @Test
+    void searchesProjectsAgainstFakeApi() throws Exception {
+        try (TestHttpServer server = new TestHttpServer()) {
+            server.json("/projects?query=chunky&limit=2", """
+                    {
+                      "pagination":{"count":2,"limit":2,"offset":0},
+                      "result":[
+                        %s,
+                        %s
+                      ]
+                    }
+                    """.formatted(projectJson("pop4959", "Chunky", "Chunky"), projectJson("Other", "ChunkyBorder", "ChunkyBorder")));
+
+            java.util.List<PluginMetadata> results = new HangarProvider(HttpClient.newHttpClient(), server.baseUri())
+                    .search("chunky", 2);
+
+            assertEquals(2, results.size());
+            assertEquals("hangar", results.getFirst().getProvider());
+            assertEquals("Chunky", results.getFirst().getId());
+            assertEquals("Chunky", results.getFirst().getName());
+            assertEquals("A demo plugin", results.getFirst().getDescription());
+            assertEquals(321, results.getFirst().getDownloads());
+            assertEquals(java.util.List.of("Owner", "Maintainer"), results.getFirst().getAuthors());
+        }
+    }
+
+    @Test
+    void searchUrlEncodesQueriesAgainstFakeApi() throws Exception {
+        try (TestHttpServer server = new TestHttpServer()) {
+            server.json("/projects?query=better+rtp&limit=1", """
+                    {"pagination":{"count":0,"limit":1,"offset":0},"result":[]}
+                    """);
+
+            java.util.List<PluginMetadata> results = new HangarProvider(HttpClient.newHttpClient(), server.baseUri())
+                    .search("better rtp", 1);
+
+            assertTrue(results.isEmpty());
+        }
+    }
+
     private static String projectJson(String owner, String slug, String name) {
         return """
                 {
