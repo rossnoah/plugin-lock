@@ -320,11 +320,15 @@ public final class PluginLockCli implements Callable<Integer> {
     }
 
     static void printProviderMatches(String id, List<PluginMetadata> matches) {
+        printProviderMatches(id, matches, 0);
+    }
+
+    static void printProviderMatches(String id, List<PluginMetadata> matches, int selectedIndex) {
         System.out.println();
         System.out.println(Ansi.bold("Found " + matches.size() + " provider match(es) for " + id + ":"));
         for (int index = 0; index < matches.size(); index++) {
             PluginMetadata metadata = matches.get(index);
-            String defaultLabel = index == 0 ? Ansi.yellow(" (default)") : "";
+            String defaultLabel = index == selectedIndex ? Ansi.yellow(" (default)") : "";
             System.out.println((index + 1) + ". " + Ansi.blue(metadata.getProvider() + ":" + metadata.getId())
                     + " - " + metadata.getName() + defaultLabel);
             if (metadata.getDescription() != null && !metadata.getDescription().isBlank()) {
@@ -340,8 +344,8 @@ public final class PluginLockCli implements Callable<Integer> {
         while (true) {
             PluginMetadata selected = matches.get(selectedIndex);
             printMetadata(selected);
-            printInstallOptions(matches, selectedIndex);
-            String answer = readConfirmation("Select option " + Ansi.yellow("[" + (selectedIndex + 1) + "]") + ": ");
+            String answer = readConfirmation("Install " + selected.getProvider() + ":" + selected.getId() + " "
+                    + Ansi.yellow("[Y/n]") + " or provider number: ");
             if (answer.isBlank() || isInstallAnswer(answer)) {
                 return PluginSelection.selected(new PluginRequest(selected.getId(), selected.getProvider(), version));
             }
@@ -350,30 +354,12 @@ public final class PluginLockCli implements Callable<Integer> {
             }
             Integer selectedOption = parseOption(answer);
             if (selectedOption != null && selectedOption >= 1 && selectedOption <= matches.size()) {
-                if (selectedOption == selectedIndex + 1) {
-                    return PluginSelection.selected(new PluginRequest(selected.getId(), selected.getProvider(), version));
-                }
                 selectedIndex = selectedOption - 1;
+                printProviderMatches(matches.getFirst().getId(), matches, selectedIndex);
                 continue;
             }
-            if (selectedOption != null && selectedOption == matches.size() + 1) {
-                return PluginSelection.exited();
-            }
-            System.out.println(Ansi.yellow("Invalid selection; enter an option number, y to install, or n to exit."));
+            System.out.println(Ansi.yellow("Invalid selection; enter y to install, n to skip, or a provider number."));
         }
-    }
-
-    static void printInstallOptions(List<PluginMetadata> matches, int selectedIndex) {
-        System.out.println("Options:");
-        for (int index = 0; index < matches.size(); index++) {
-            PluginMetadata metadata = matches.get(index);
-            boolean selected = index == selectedIndex;
-            String action = selected ? "Install " : "Switch to ";
-            String defaultLabel = selected ? Ansi.yellow(" (default)") : "";
-            System.out.println((index + 1) + ". " + action + metadata.getProvider() + ":" + metadata.getId()
-                    + defaultLabel);
-        }
-        System.out.println((matches.size() + 1) + ". Exit (n)");
     }
 
     private static Integer parseOption(String answer) {
@@ -668,8 +654,8 @@ public final class PluginLockCli implements Callable<Integer> {
                 for (String id : ids) {
                     PluginSelection selection = parent.selectPlugin(provider, id, version, yes);
                     if (selection.isExited()) {
-                        System.out.println("Cancelled");
-                        return 1;
+                        System.out.println("Skipped " + id);
+                        continue;
                     }
                     PluginRequest request = selection.request();
                     RequestChange change = applyRequest(manifest, request);
