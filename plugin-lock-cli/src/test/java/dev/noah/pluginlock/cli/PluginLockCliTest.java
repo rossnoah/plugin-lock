@@ -163,6 +163,18 @@ class PluginLockCliTest {
     }
 
     @Test
+    void suggestionsMessageListsProviderIdsAndNames() {
+        String message = PluginLockCli.suggestionsMessage(List.of(
+                metadata("hangar", "essentialsx-chat-module", "EssentialsX Chat"),
+                metadata("modrinth", "essentialsx", "EssentialsX")
+        ));
+
+        assertTrue(message.contains("Did you mean:"));
+        assertTrue(message.contains("hangar:essentialsx-chat-module (EssentialsX Chat)"));
+        assertTrue(message.contains("modrinth:essentialsx"));
+    }
+
+    @Test
     void installPromptUsesYesNoConfirmation() {
         InputStream originalIn = System.in;
         ByteArrayOutputStream output = new ByteArrayOutputStream();
@@ -242,10 +254,14 @@ class PluginLockCliTest {
     }
 
     private static PluginMetadata metadata(String provider, String id) {
+        return metadata(provider, id, id);
+    }
+
+    private static PluginMetadata metadata(String provider, String id, String name) {
         PluginMetadata metadata = new PluginMetadata();
         metadata.setProvider(provider);
         metadata.setId(id);
-        metadata.setName(id);
+        metadata.setName(name);
         return metadata;
     }
 }

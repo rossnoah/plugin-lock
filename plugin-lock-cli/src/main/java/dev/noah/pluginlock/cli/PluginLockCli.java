@@ -251,7 +251,7 @@ public final class PluginLockCli implements Callable<Integer> {
 
         List<PluginMetadata> matches = findProviderMatches(id);
         if (matches.isEmpty()) {
-            throw new PluginNotFoundException("Modrinth or Hangar", id);
+            throw pluginNotFoundWithSuggestions(id);
         }
         PluginMetadata selected = matches.get(0);
         if (matches.size() > 1 && assumeYes) {
@@ -317,6 +317,34 @@ public final class PluginLockCli implements Callable<Integer> {
             matches.add(fetchMetadata(provider, id));
         } catch (PluginNotFoundException ignored) {
         }
+    }
+
+    private PluginNotFoundException pluginNotFoundWithSuggestions(String id) {
+        try {
+            List<PluginMetadata> suggestions = searchPlugins("auto", id, 5);
+            if (!suggestions.isEmpty()) {
+                return new PluginNotFoundException("Modrinth or Hangar", id + suggestionsMessage(suggestions));
+            }
+        } catch (Exception ignored) {
+        }
+        return new PluginNotFoundException("Modrinth or Hangar", id);
+    }
+
+    static String suggestionsMessage(List<PluginMetadata> suggestions) {
+        StringBuilder message = new StringBuilder();
+        message.append(System.lineSeparator()).append("Did you mean:");
+        for (PluginMetadata suggestion : suggestions) {
+            message.append(System.lineSeparator())
+                    .append("  ")
+                    .append(suggestion.getProvider())
+                    .append(":")
+                    .append(suggestion.getId());
+            if (suggestion.getName() != null && !suggestion.getName().isBlank()
+                    && !suggestion.getName().equalsIgnoreCase(suggestion.getId())) {
+                message.append(" (").append(suggestion.getName()).append(")");
+            }
+        }
+        return message.toString();
     }
 
     static void printProviderMatches(String id, List<PluginMetadata> matches) {
