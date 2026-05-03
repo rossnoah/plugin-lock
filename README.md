@@ -98,6 +98,7 @@ pl install viaversion luckperms viabackwards chunky betterrtp
 Check your server state:
 
 ```sh
+pl info luckperms
 pl list
 pl doctor
 ```
@@ -143,6 +144,10 @@ pl run
     <td><code>pl search chunky</code></td>
   </tr>
   <tr>
+    <td>Inspect plugin versions</td>
+    <td><code>pl info luckperms</code></td>
+  </tr>
+  <tr>
     <td>List locked plugins</td>
     <td><code>pl list</code></td>
   </tr>
@@ -177,6 +182,8 @@ pl install luckperms@5.4.0
 pl install modrinth:luckperms
 pl install hangar:PlaceholderAPI
 pl install hangar:PlaceholderAPI@2.11.6
+pl install --minecraft 26.1.2
+pl update --interactive
 ```
 
 Run against another server directory:
@@ -190,6 +197,7 @@ pl --project-dir /srv/minecraft run
 Use JSON output in automation:
 
 ```sh
+pl --json info luckperms
 pl --json list
 pl --json doctor
 pl --json remove luckperms
@@ -227,6 +235,12 @@ If the directory is empty, `pl install <plugin>` can initialize the project firs
 pl install luckperms --minecraft 1.21.4 --server paper --yes
 ```
 
+You can also initialize or change the manifest Minecraft version without adding a plugin:
+
+```sh
+pl install --minecraft 26.1.2 --yes
+```
+
 ### Search
 
 ```sh
@@ -234,6 +248,17 @@ pl search luckperms
 pl search chunky --provider modrinth
 pl search placeholder --provider hangar
 ```
+
+### Info
+
+```sh
+pl info luckperms
+pl info modrinth:luckperms
+pl info hangar:PlaceholderAPI
+pl info luckperms --minecraft 1.21.11 --loader paper
+```
+
+`pl info` shows plugin metadata and recent available versions. When a Minecraft version is known from `server-lock.json`, or passed with `--minecraft`, compatible versions are marked in the output. This is useful before pinning a version with shorthand such as `pl install luckperms@v5.5.17-bukkit`.
 
 ### Run
 
@@ -260,10 +285,11 @@ pl add hangar:PlaceholderAPI --yes
 ```sh
 pl update
 pl update luckperms
+pl update --interactive
 pl update --server
 ```
 
-`pl update` refreshes plugin versions from the manifest. `pl update --server` refreshes the locked Paper/Purpur server build too.
+`pl update` refreshes plugin versions from the manifest. `pl update luckperms` updates only matching locked plugins. `pl update --interactive` shows a numbered picker so you can update selected plugins without typing ids. `pl update --server` refreshes the locked Paper/Purpur server build too.
 
 ### Remove
 

@@ -4,6 +4,7 @@ import dev.noah.pluginlock.core.TestHttpServer;
 import dev.noah.pluginlock.core.model.LockedPlugin;
 import dev.noah.pluginlock.core.model.PluginMetadata;
 import dev.noah.pluginlock.core.model.PluginRequest;
+import dev.noah.pluginlock.core.model.PluginVersion;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
@@ -67,6 +68,34 @@ class ModrinthProviderIntegrationTest {
 
             assertEquals("old", plugin.getVersionId());
             assertEquals("old.jar", plugin.getFileName());
+        }
+    }
+
+    @Test
+    void listsVersionsAgainstFakeApi() throws Exception {
+        try (TestHttpServer server = new TestHttpServer()) {
+            server.json("/project/demo", """
+                    {"id":"project-1","title":"Demo","project_type":"plugin","loaders":["paper"]}
+                    """);
+            server.json("/project/demo/version?loaders=%5B%22paper%22%5D", """
+                    [{
+                      "id":"version-1",
+                      "version_number":"1.0.0",
+                      "loaders":["paper"],
+                      "game_versions":["1.21.4"],
+                      "files":[{"filename":"Demo.jar","url":"https://example.test/Demo.jar","primary":true}]
+                    }]
+                    """);
+
+            java.util.List<PluginVersion> versions = new ModrinthProvider(HttpClient.newHttpClient(), server.baseUri())
+                    .versions("demo", "paper");
+
+            assertEquals(1, versions.size());
+            assertEquals("version-1", versions.getFirst().getId());
+            assertEquals("1.0.0", versions.getFirst().getName());
+            assertEquals("Demo.jar", versions.getFirst().getFileName());
+            assertTrue(versions.getFirst().isDownloadable());
+            assertEquals(java.util.List.of("1.21.4"), versions.getFirst().getMinecraftVersions());
         }
     }
 

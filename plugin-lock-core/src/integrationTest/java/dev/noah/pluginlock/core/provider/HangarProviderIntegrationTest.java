@@ -4,6 +4,7 @@ import dev.noah.pluginlock.core.TestHttpServer;
 import dev.noah.pluginlock.core.model.LockedPlugin;
 import dev.noah.pluginlock.core.model.PluginMetadata;
 import dev.noah.pluginlock.core.model.PluginRequest;
+import dev.noah.pluginlock.core.model.PluginVersion;
 import org.junit.jupiter.api.Test;
 
 import java.net.http.HttpClient;
@@ -43,6 +44,37 @@ class HangarProviderIntegrationTest {
             assertEquals("1.0.0", plugin.getVersionName());
             assertEquals("Demo.jar", plugin.getFileName());
             assertEquals("abc123", plugin.getSha256());
+        }
+    }
+
+    @Test
+    void listsVersionsAgainstFakeApi() throws Exception {
+        try (TestHttpServer server = new TestHttpServer()) {
+            server.json("/projects/Owner/Demo", projectJson("Owner", "Demo", "Demo Plugin"));
+            server.json("/projects/Owner/Demo/versions?limit=100", """
+                    {
+                      "pagination":{"count":1,"limit":100,"offset":0},
+                      "result":[{
+                        "name":"1.0.0",
+                        "downloads":{
+                          "PAPER":{
+                            "fileInfo":{"name":"Demo.jar","sizeBytes":42,"sha256Hash":"abc123"},
+                            "downloadUrl":"https://example.test/Demo.jar"
+                          }
+                        },
+                        "platformDependencies":{"PAPER":["1.21.4"]}
+                      }]
+                    }
+                    """);
+
+            java.util.List<PluginVersion> versions = new HangarProvider(HttpClient.newHttpClient(), server.baseUri())
+                    .versions("Owner/Demo", "paper");
+
+            assertEquals(1, versions.size());
+            assertEquals("1.0.0", versions.getFirst().getId());
+            assertEquals("Demo.jar", versions.getFirst().getFileName());
+            assertTrue(versions.getFirst().isDownloadable());
+            assertEquals(java.util.List.of("1.21.4"), versions.getFirst().getMinecraftVersions());
         }
     }
 

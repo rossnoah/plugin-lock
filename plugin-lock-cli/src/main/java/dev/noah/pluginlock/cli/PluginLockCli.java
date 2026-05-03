@@ -9,10 +9,13 @@ import dev.noah.pluginlock.core.PluginLockFiles;
 import dev.noah.pluginlock.core.PluginResolver;
 import dev.noah.pluginlock.core.model.LockedPlugin;
 import dev.noah.pluginlock.core.model.LockedServer;
+import dev.noah.pluginlock.core.model.PluginInspection;
 import dev.noah.pluginlock.core.model.PluginLock;
 import dev.noah.pluginlock.core.model.PluginManifest;
 import dev.noah.pluginlock.core.model.PluginMetadata;
 import dev.noah.pluginlock.core.model.PluginRequest;
+import dev.noah.pluginlock.core.model.PluginResolutionCheck;
+import dev.noah.pluginlock.core.model.PluginVersion;
 import dev.noah.pluginlock.core.provider.HangarProvider;
 import dev.noah.pluginlock.core.provider.ModrinthProvider;
 import dev.noah.pluginlock.core.provider.PluginNotFoundException;
@@ -51,6 +54,7 @@ import java.util.concurrent.Callable;
                 PluginLockCli.DoctorCommand.class,
                 PluginLockCli.UpdateCommand.class,
                 PluginLockCli.SearchCommand.class,
+                PluginLockCli.InfoCommand.class,
                 PluginLockCli.RunCommand.class
         }
 )
@@ -71,6 +75,7 @@ public final class PluginLockCli implements Callable<Integer> {
     private final HangarProvider hangarProvider = new HangarProvider(HttpClient.newHttpClient());
     private final ServerDownloads serverDownloads;
     private final LockResolver lockResolver;
+    private final PluginInspector pluginInspector;
 
     public PluginLockCli() {
         this(new ServerDownloads(HttpClient.newHttpClient()), new PluginResolver()::resolve);
@@ -83,6 +88,24 @@ public final class PluginLockCli implements Callable<Integer> {
     PluginLockCli(ServerDownloads serverDownloads, LockResolver lockResolver) {
         this.serverDownloads = serverDownloads;
         this.lockResolver = lockResolver;
+        PluginResolver resolver = new PluginResolver();
+        this.pluginInspector = new PluginInspector() {
+            @Override
+            public PluginInspection inspect(PluginRequest request, String loader) throws Exception {
+                return resolver.inspect(request, loader);
+            }
+
+            @Override
+            public PluginResolutionCheck check(PluginRequest request, String minecraftVersion, String loader) {
+                return resolver.check(request, minecraftVersion, loader);
+            }
+        };
+    }
+
+    PluginLockCli(ServerDownloads serverDownloads, LockResolver lockResolver, PluginInspector pluginInspector) {
+        this.serverDownloads = serverDownloads;
+        this.lockResolver = lockResolver;
+        this.pluginInspector = pluginInspector;
     }
 
     public static void main(String[] args) {
@@ -163,6 +186,12 @@ public final class PluginLockCli implements Callable<Integer> {
         PluginLock resolve(PluginManifest manifest) throws Exception;
     }
 
+    interface PluginInspector {
+        PluginInspection inspect(PluginRequest request, String loader) throws Exception;
+
+        PluginResolutionCheck check(PluginRequest request, String minecraftVersion, String loader);
+    }
+
     LockedServer initializeProject(String server, String minecraftVersion, boolean yes) throws Exception {
         Path manifestPath = resolve(PluginLockFiles.MANIFEST_FILE);
         if (Files.exists(manifestPath)) {
@@ -237,6 +266,11 @@ public final class PluginLockCli implements Callable<Integer> {
     }
 
     PluginSelection selectPlugin(String provider, String id, String version, boolean assumeYes) throws Exception {
+        return selectPlugin(provider, id, version, assumeYes, null, null);
+    }
+
+    PluginSelection selectPlugin(String provider, String id, String version, boolean assumeYes,
+                                 String minecraftVersion, String loader) throws Exception {
         PluginSpec spec = PluginSpec.parse(id, provider, version);
         provider = spec.provider();
         id = spec.id();
@@ -244,7 +278,7 @@ public final class PluginLockCli implements Callable<Integer> {
         if (!"auto".equalsIgnoreCase(provider)) {
             if (!assumeYes) {
                 PluginMetadata metadata = fetchMetadata(provider, id);
-                return selectAndConfirmProvider(List.of(metadata), version);
+                return selectAndConfirmProvider(List.of(metadata), version, minecraftVersion, loader, this);
             }
             return PluginSelection.selected(new PluginRequest(id, provider.toLowerCase(Locale.ROOT), version));
         }
@@ -259,7 +293,7 @@ public final class PluginLockCli implements Callable<Integer> {
         }
         if (!assumeYes) {
             printProviderMatches(id, matches);
-            return selectAndConfirmProvider(matches, version);
+            return selectAndConfirmProvider(matches, version, minecraftVersion, loader, this);
         }
         return PluginSelection.selected(new PluginRequest(selected.getId(), selected.getProvider(), version));
     }
@@ -368,10 +402,18 @@ public final class PluginLockCli implements Callable<Integer> {
     }
 
     static PluginSelection selectAndConfirmProvider(List<PluginMetadata> matches, String version) {
+        return selectAndConfirmProvider(matches, version, null, null, null);
+    }
+
+    static PluginSelection selectAndConfirmProvider(List<PluginMetadata> matches, String version,
+                                                    String minecraftVersion, String loader, PluginLockCli cli) {
         int selectedIndex = 0;
         while (true) {
             PluginMetadata selected = matches.get(selectedIndex);
             printMetadata(selected);
+            if (cli != null) {
+                printVersionPreflight(cli, selected, version, minecraftVersion, loader);
+            }
             String answer = readConfirmation("Install " + selected.getProvider() + ":" + selected.getId() + " "
                     + Ansi.yellow("[Y/n]") + " or provider number: ");
             if (answer.isBlank() || isInstallAnswer(answer)) {
@@ -387,6 +429,35 @@ public final class PluginLockCli implements Callable<Integer> {
                 continue;
             }
             System.out.println(Ansi.yellow("Invalid selection; enter y to install, n to skip, or a provider number."));
+        }
+    }
+
+    private static void printVersionPreflight(PluginLockCli cli, PluginMetadata metadata, String version,
+                                              String minecraftVersion, String loader) {
+        if (minecraftVersion == null || minecraftVersion.isBlank()
+                || loader == null || loader.isBlank()
+                || version == null || version.isBlank()
+                || "latest".equalsIgnoreCase(version)) {
+            return;
+        }
+        try {
+            PluginResolutionCheck check = cli.pluginInspector.check(new PluginRequest(metadata.getId(), metadata.getProvider(), version),
+                    minecraftVersion, loader);
+            if (!check.isResolvable()) {
+                System.out.println(Ansi.yellow("Version check: ") + check.getMessage());
+                System.out.println();
+                return;
+            }
+            LockedPlugin resolved = check.getPlugin();
+            System.out.println(Ansi.green("Version OK: ") + resolved.getVersionName()
+                    + " supports " + loader + " " + minecraftVersion);
+            if (resolved.getCompatibilityWarning() != null && !resolved.getCompatibilityWarning().isBlank()) {
+                System.out.println(Ansi.yellow("Warning: ") + resolved.getCompatibilityWarning());
+            }
+            System.out.println();
+        } catch (Exception exception) {
+            System.out.println(Ansi.yellow("Version check: ") + exception.getMessage());
+            System.out.println();
         }
     }
 
@@ -580,7 +651,8 @@ public final class PluginLockCli implements Callable<Integer> {
         public Integer call() throws Exception {
             PluginManifest manifest = parent.readManifestOrDefault();
             ensurePluginsList(manifest);
-            PluginSelection selection = parent.selectPlugin(provider, id, version, yes);
+            PluginSelection selection = parent.selectPlugin(provider, id, version, yes,
+                    manifest.getMinecraftVersion(), manifest.getLoader());
             if (selection.isExited()) {
                 System.out.println("Cancelled");
                 return 1;
@@ -669,18 +741,20 @@ public final class PluginLockCli implements Callable<Integer> {
             Path manifestPath = parent.resolve(PluginLockFiles.MANIFEST_FILE);
             Path lockfilePath = parent.resolve(PluginLockFiles.LOCK_FILE);
 
-            if (!ids.isEmpty() && Files.notExists(manifestPath) && Files.notExists(lockfilePath)) {
+            if ((shouldInitialize(minecraftVersion, server) || !ids.isEmpty())
+                    && Files.notExists(manifestPath) && Files.notExists(lockfilePath)) {
                 parent.initializeProject(server, minecraftVersion, yes);
             }
 
-            if (!ids.isEmpty() || Files.exists(manifestPath)) {
+            if (!ids.isEmpty() || shouldInitialize(minecraftVersion, server) || Files.exists(manifestPath)) {
                 PluginManifest manifest = parent.readManifestOrDefault();
                 ensurePluginsList(manifest);
+                boolean manifestChanged = applyInstallOptions(manifest, minecraftVersion);
                 List<PluginRequest> requested = new ArrayList<>();
                 List<RequestChange> requestChanges = new ArrayList<>();
-                boolean manifestChanged = false;
                 for (String id : ids) {
-                    PluginSelection selection = parent.selectPlugin(provider, id, version, yes);
+                    PluginSelection selection = parent.selectPlugin(provider, id, version, yes,
+                            manifest.getMinecraftVersion(), manifest.getLoader());
                     if (selection.isExited()) {
                         System.out.println("Skipped " + id);
                         continue;
@@ -711,6 +785,20 @@ public final class PluginLockCli implements Callable<Integer> {
                 throw new IllegalStateException("No server-lock.json or server-lock.lock.json found. Run `pl init` first.");
             }
             return 0;
+        }
+
+        private static boolean shouldInitialize(String minecraftVersion, String server) {
+            return minecraftVersion != null && !minecraftVersion.isBlank()
+                    || server != null && !server.isBlank();
+        }
+
+        private static boolean applyInstallOptions(PluginManifest manifest, String minecraftVersion) {
+            if (minecraftVersion == null || minecraftVersion.isBlank()
+                    || same(manifest.getMinecraftVersion(), minecraftVersion.trim())) {
+                return false;
+            }
+            manifest.setMinecraftVersion(minecraftVersion.trim());
+            return true;
         }
 
         private static String installMessage(PluginLock lock, List<PluginRequest> requested, InstallResult result, List<RequestChange> changes) {
@@ -1137,6 +1225,9 @@ public final class PluginLockCli implements Callable<Integer> {
         @Option(names = "--server", description = "Update the locked server build and download the server jar.")
         boolean server;
 
+        @Option(names = "--interactive", description = "Choose which locked plugins to update.")
+        boolean interactive;
+
         @Override
         public Integer call() throws Exception {
             Path manifestPath = parent.resolve(PluginLockFiles.MANIFEST_FILE);
@@ -1149,11 +1240,27 @@ public final class PluginLockCli implements Callable<Integer> {
                     : null;
             ObjectNode existingState = existing == null ? null : stableLock(existing);
             PluginLock resolved = parent.resolveLock(manifest);
-            List<String> selectedUpdateKeys = ids.isEmpty() ? List.of() : selectedPluginKeys(existing, resolved, ids);
-            PluginLock updated = ids.isEmpty() || existing == null
+            List<String> requestedIds = interactive ? selectInteractiveUpdates(existing, resolved) : ids;
+            if (requestedIds == null) {
+                parent.output().success("update", "No selected plugins to update", Map.of(
+                        "count", 0,
+                        "lockedCount", existing == null ? resolved.getPlugins().size() : existing.getPlugins().size(),
+                        "requestedCount", 0,
+                        "updated", List.of(),
+                        "interactive", true,
+                        "server", server,
+                        "changed", false,
+                        "lockChanged", false,
+                        "serverDownloaded", false,
+                        "plugins", List.of()
+                ));
+                return 0;
+            }
+            List<String> selectedUpdateKeys = requestedIds.isEmpty() ? List.of() : selectedPluginKeys(existing, resolved, requestedIds);
+            PluginLock updated = requestedIds.isEmpty() || existing == null
                     ? resolved
-                    : mergeSelectedUpdates(existing, resolved, ids);
-            int updatedPluginCount = ids.isEmpty() ? updated.getPlugins().size() : selectedUpdateKeys.size();
+                    : mergeSelectedUpdates(existing, resolved, requestedIds);
+            int updatedPluginCount = requestedIds.isEmpty() ? updated.getPlugins().size() : selectedUpdateKeys.size();
             ServerDownloads.DownloadResult serverDownload = null;
             if (server) {
                 LockedServer lockedServer = latestServer(parent, manifest, existing);
@@ -1165,11 +1272,12 @@ public final class PluginLockCli implements Callable<Integer> {
             if (lockChanged) {
                 parent.writeLock(updated);
             }
-            parent.output().success("update", updateMessage(ids, server, updated, updatedPluginCount, lockChanged, serverDownloaded), Map.of(
+            parent.output().success("update", updateMessage(requestedIds, server, updated, updatedPluginCount, lockChanged, serverDownloaded), Map.of(
                     "count", updatedPluginCount,
                     "lockedCount", updated.getPlugins().size(),
-                    "requestedCount", ids.size(),
-                    "updated", ids,
+                    "requestedCount", requestedIds.size(),
+                    "updated", requestedIds,
+                    "interactive", interactive,
                     "server", server,
                     "changed", lockChanged || serverDownloaded,
                     "lockChanged", lockChanged,
@@ -1177,6 +1285,44 @@ public final class PluginLockCli implements Callable<Integer> {
                     "plugins", updated.getPlugins().stream().map(LockedPlugin::getId).toList()
             ));
             return 0;
+        }
+
+        private static List<String> selectInteractiveUpdates(PluginLock existing, PluginLock resolved) {
+            List<LockedPlugin> plugins = existing != null && !existing.getPlugins().isEmpty()
+                    ? existing.getPlugins()
+                    : resolved.getPlugins();
+            if (plugins.isEmpty()) {
+                return List.of();
+            }
+            System.out.println();
+            System.out.println(Ansi.bold("Select plugins to update:"));
+            for (int index = 0; index < plugins.size(); index++) {
+                LockedPlugin plugin = plugins.get(index);
+                System.out.println((index + 1) + ". " + Ansi.blue(plugin.getProvider() + ":" + plugin.getId())
+                        + "  " + blank(plugin.getName())
+                        + "  " + Ansi.dim(blank(plugin.getVersionName())));
+            }
+            String answer = readConfirmation("Update plugins [all]: ");
+            if (answer.isBlank() || "all".equalsIgnoreCase(answer) || "*".equals(answer)) {
+                return List.of();
+            }
+            if (isExitAnswer(answer)) {
+                return null;
+            }
+            List<String> selected = new ArrayList<>();
+            for (String token : answer.split(",")) {
+                String trimmed = token.trim();
+                if (trimmed.isBlank()) {
+                    continue;
+                }
+                Integer option = parseOption(trimmed);
+                if (option != null && option >= 1 && option <= plugins.size()) {
+                    selected.add(plugins.get(option - 1).getId());
+                } else {
+                    selected.add(trimmed);
+                }
+            }
+            return selected;
         }
 
         private static LockedServer latestServer(PluginLockCli parent, PluginManifest manifest, PluginLock existing)
@@ -1287,6 +1433,55 @@ public final class PluginLockCli implements Callable<Integer> {
         public Integer call() throws Exception {
             List<PluginMetadata> results = parent.searchPlugins(provider, query, Math.max(1, limit));
             parent.output().search(query, results);
+            return 0;
+        }
+    }
+
+    @Command(name = "info", mixinStandardHelpOptions = true, description = "Show plugin metadata and available versions.")
+    static final class InfoCommand implements Callable<Integer> {
+        @ParentCommand
+        PluginLockCli parent;
+
+        @Parameters(index = "0", description = "Provider project slug or id, for example luckperms.")
+        String id;
+
+        @Option(names = "--provider", defaultValue = "auto", description = "Plugin provider: auto, modrinth, or hangar.")
+        String provider;
+
+        @Option(names = "--minecraft", description = "Only mark versions against this Minecraft version. Defaults to the manifest value.")
+        String minecraftVersion;
+
+        @Option(names = "--loader", description = "Loader to query, for example paper. Defaults to the manifest value.")
+        String loader;
+
+        @Option(names = "--limit", defaultValue = "12", description = "Maximum versions to show per provider.")
+        int limit;
+
+        @Override
+        public Integer call() throws Exception {
+            PluginManifest manifest = parent.readManifestOrDefault();
+            String resolvedMinecraft = minecraftVersion == null || minecraftVersion.isBlank()
+                    ? manifest.getMinecraftVersion()
+                    : minecraftVersion.trim();
+            String resolvedLoader = loader == null || loader.isBlank()
+                    ? manifest.getLoader()
+                    : loader.trim();
+            PluginSpec spec = PluginSpec.parse(id, provider, "latest");
+            List<PluginMetadata> matches = "auto".equalsIgnoreCase(spec.provider())
+                    ? parent.findProviderMatches(spec.id())
+                    : List.of(parent.fetchMetadata(spec.provider(), spec.id()));
+            if (matches.isEmpty()) {
+                throw parent.pluginNotFoundWithSuggestions(spec.id());
+            }
+            List<PluginInspection> infos = new ArrayList<>();
+            for (PluginMetadata metadata : matches) {
+                PluginInspection inspection = parent.pluginInspector.inspect(
+                        new PluginRequest(metadata.getId(), metadata.getProvider(), "latest"),
+                        resolvedLoader);
+                inspection.setVersions(inspection.getVersions().stream().limit(Math.max(1, limit)).toList());
+                infos.add(inspection);
+            }
+            parent.output().info(infos, resolvedMinecraft, resolvedLoader);
             return 0;
         }
     }
@@ -1520,6 +1715,96 @@ public final class PluginLockCli implements Callable<Integer> {
                     System.out.println(Ansi.dim("  " + metadata.getDescription()));
                 }
             }
+        }
+
+        void info(List<PluginInspection> infos, String minecraftVersion, String loader) {
+            if (json) {
+                writeJson(Map.of(
+                        "status", "success",
+                        "command", "info",
+                        "minecraftVersion", nullToBlank(minecraftVersion),
+                        "loader", nullToBlank(loader),
+                        "plugins", infos.stream()
+                                .map(info -> {
+                                    Map<String, Object> details = new LinkedHashMap<>();
+                                    PluginMetadata metadata = info.getMetadata();
+                                    details.put("provider", metadata.getProvider());
+                                    details.put("id", metadata.getId());
+                                    details.put("name", metadata.getName());
+                                    details.put("description", metadata.getDescription());
+                                    details.put("downloads", metadata.getDownloads());
+                                    details.put("authors", metadata.getAuthors());
+                                    details.put("versions", info.getVersions().stream().map(Output::versionDetails).toList());
+                                    return details;
+                                })
+                                .toList()
+                ));
+                return;
+            }
+            for (PluginInspection info : infos) {
+                printMetadata(info.getMetadata());
+                if (info.getVersions().isEmpty()) {
+                    System.out.println("No versions found.");
+                    continue;
+                }
+                System.out.println(Ansi.bold("Versions:"));
+                for (PluginVersion version : info.getVersions()) {
+                    String marker = supportsMinecraft(version, minecraftVersion) ? Ansi.green("OK") : Ansi.dim("--");
+                    System.out.println(marker + " " + version.getName()
+                            + "  " + Ansi.dim(minecraftSummary(version.getMinecraftVersions()))
+                            + loaderSummary(version.getLoaders(), loader)
+                            + fileSummary(version));
+                }
+                System.out.println();
+            }
+        }
+
+        private static String fileSummary(PluginVersion version) {
+            if (version.getFileName() == null || version.getFileName().isBlank()) {
+                return "";
+            }
+            return "  " + Ansi.dim(version.getFileName());
+        }
+
+        static String loaderSummary(List<String> loaders, String selectedLoader) {
+            if (loaders == null || loaders.isEmpty()) {
+                return "";
+            }
+            if (selectedLoader != null && !selectedLoader.isBlank()
+                    && loaders.stream().anyMatch(loader -> loader.equalsIgnoreCase(selectedLoader))) {
+                return "";
+            }
+            return "  " + Ansi.dim(String.join("/", loaders));
+        }
+
+        static String minecraftSummary(List<String> versions) {
+            if (versions == null || versions.isEmpty()) {
+                return "Minecraft: unknown";
+            }
+            if (versions.size() <= 4) {
+                return "MC " + String.join(", ", versions);
+            }
+            return "MC " + versions.getFirst() + "..." + versions.getLast()
+                    + " (" + versions.size() + ")";
+        }
+
+        private static Map<String, ?> versionDetails(PluginVersion version) {
+            Map<String, Object> details = new LinkedHashMap<>();
+            details.put("id", nullToBlank(version.getId()));
+            details.put("name", nullToBlank(version.getName()));
+            details.put("minecraftVersions", version.getMinecraftVersions());
+            details.put("loaders", version.getLoaders());
+            details.put("fileName", nullToBlank(version.getFileName()));
+            details.put("downloadable", version.isDownloadable());
+            return details;
+        }
+
+        private static boolean supportsMinecraft(PluginVersion version, String minecraftVersion) {
+            if (minecraftVersion == null || minecraftVersion.isBlank()) {
+                return false;
+            }
+            return version.getMinecraftVersions().stream()
+                    .anyMatch(candidate -> dev.noah.pluginlock.core.provider.MinecraftVersions.supports(candidate, minecraftVersion));
         }
 
         static void error(boolean json, String message) {

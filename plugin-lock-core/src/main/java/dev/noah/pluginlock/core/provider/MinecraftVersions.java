@@ -3,13 +3,13 @@ package dev.noah.pluginlock.core.provider;
 import java.util.ArrayList;
 import java.util.List;
 
-final class MinecraftVersions {
+public final class MinecraftVersions {
     private static final Version BREAKING_1_13 = parse("1.13");
 
     private MinecraftVersions() {
     }
 
-    static boolean supports(String pluginVersion, String serverVersion) {
+    public static boolean supports(String pluginVersion, String serverVersion) {
         Version plugin = parse(pluginVersion);
         Version server = parse(serverVersion);
         if (plugin == null || server == null) {
@@ -21,7 +21,7 @@ final class MinecraftVersions {
         return plugin.compareTo(server) <= 0;
     }
 
-    static boolean isExact(String pluginVersion, String serverVersion) {
+    public static boolean isExact(String pluginVersion, String serverVersion) {
         Version plugin = parse(pluginVersion);
         Version server = parse(serverVersion);
         if (plugin == null || server == null) {

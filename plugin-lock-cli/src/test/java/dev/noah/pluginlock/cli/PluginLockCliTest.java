@@ -1,6 +1,10 @@
 package dev.noah.pluginlock.cli;
 
 import dev.noah.pluginlock.core.model.PluginMetadata;
+import dev.noah.pluginlock.core.model.PluginInspection;
+import dev.noah.pluginlock.core.model.PluginRequest;
+import dev.noah.pluginlock.core.model.PluginResolutionCheck;
+import dev.noah.pluginlock.core.model.PluginVersion;
 import org.junit.jupiter.api.Test;
 import picocli.CommandLine;
 
@@ -225,8 +229,54 @@ class PluginLockCliTest {
         assertTrue(commandLine.getSubcommands().containsKey("list"));
         assertTrue(commandLine.getSubcommands().containsKey("doctor"));
         assertTrue(commandLine.getSubcommands().containsKey("search"));
+        assertTrue(commandLine.getSubcommands().containsKey("info"));
         assertTrue(commandLine.getSubcommands().containsKey("update"));
         assertTrue(commandLine.getSubcommands().containsKey("run"));
+    }
+
+    @Test
+    void infoOutputSummarizesLongMinecraftVersionLists() {
+        PluginLockCli cli = new PluginLockCli(new ServerDownloads(java.net.http.HttpClient.newHttpClient()), ignored -> new dev.noah.pluginlock.core.model.PluginLock(),
+                new PluginLockCli.PluginInspector() {
+                    @Override
+                    public PluginInspection inspect(PluginRequest request, String loader) {
+                        PluginInspection inspection = new PluginInspection();
+                        inspection.setMetadata(metadata("modrinth", "luckperms", "LuckPerms"));
+                        PluginVersion version = new PluginVersion();
+                        version.setName("v5.5.17-bukkit");
+                        version.setFileName("LuckPerms-Bukkit-5.5.17.jar");
+                        version.setMinecraftVersions(List.of("1.8.9", "1.12.2", "1.21.11", "26.1.1", "26.1.2"));
+                        version.setLoaders(List.of("bukkit", "paper", "spigot"));
+                        inspection.setVersions(List.of(version));
+                        return inspection;
+                    }
+
+                    @Override
+                    public PluginResolutionCheck check(PluginRequest request, String minecraftVersion, String loader) {
+                        return PluginResolutionCheck.failed("unused");
+                    }
+                });
+
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        CommandLine commandLine = PluginLockCli.commandLine(cli);
+        commandLine.setOut(new java.io.PrintWriter(output, true));
+        commandLine.setErr(new java.io.PrintWriter(output, true));
+        PrintStream originalOut = System.out;
+        int exitCode;
+        try {
+            System.setOut(new PrintStream(output));
+            exitCode = commandLine.execute("info", "luckperms", "--provider", "modrinth", "--minecraft", "26.1.2", "--loader", "paper");
+        } finally {
+            System.setOut(originalOut);
+        }
+
+        String summary = output.toString();
+        assertEquals(0, exitCode);
+        assertTrue(summary.contains("OK v5.5.17-bukkit"));
+        assertTrue(summary.contains("MC 1.8.9...26.1.2 (5)"));
+        assertTrue(summary.contains("LuckPerms-Bukkit-5.5.17.jar"));
+        assertTrue(!summary.contains("Minecraft:"));
+        assertTrue(!summary.contains("Loaders:"));
     }
 
     @Test

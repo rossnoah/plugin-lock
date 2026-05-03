@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.noah.pluginlock.core.model.LockedPlugin;
 import dev.noah.pluginlock.core.model.PluginMetadata;
 import dev.noah.pluginlock.core.model.PluginRequest;
+import dev.noah.pluginlock.core.model.PluginVersion;
 
 import java.io.IOException;
 import java.net.URI;
@@ -86,6 +87,28 @@ public final class ModrinthProvider {
             results.add(metadata);
         }
         return results;
+    }
+
+    public List<PluginVersion> versions(String id, String loader) throws IOException, InterruptedException {
+        JsonNode project = get("project/" + segment(id), id);
+        ensurePluginProject(project, id);
+        String path = "project/" + segment(id) + "/version";
+        if (loader != null && !loader.isBlank()) {
+            path += "?loaders=%5B%22" + query(loader.toLowerCase(Locale.ROOT)) + "%22%5D";
+        }
+        List<PluginVersion> result = new ArrayList<>();
+        for (JsonNode version : get(path)) {
+            PluginVersion info = new PluginVersion();
+            info.setId(version.path("id").asText());
+            info.setName(version.path("version_number").asText(version.path("name").asText()));
+            info.setMinecraftVersions(textValues(version.path("game_versions")));
+            info.setLoaders(textValues(version.path("loaders")));
+            JsonNode file = selectPrimaryFile(version);
+            info.setFileName(file.path("filename").asText(""));
+            info.setDownloadable(!file.path("url").asText("").isBlank());
+            result.add(info);
+        }
+        return result;
     }
 
     private static void ensurePluginProject(JsonNode project, String id) throws PluginNotFoundException {
@@ -211,6 +234,16 @@ public final class ModrinthProvider {
             throw new IllegalArgumentException("Version " + version.path("id").asText() + " has no files");
         }
         return fallback;
+    }
+
+    private static List<String> textValues(JsonNode values) {
+        List<String> result = new ArrayList<>();
+        if (values.isArray()) {
+            for (JsonNode value : values) {
+                result.add(value.asText());
+            }
+        }
+        return result;
     }
 
     private static String segment(String value) {

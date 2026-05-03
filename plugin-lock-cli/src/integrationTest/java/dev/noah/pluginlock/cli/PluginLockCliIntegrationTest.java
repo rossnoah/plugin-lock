@@ -219,6 +219,33 @@ class PluginLockCliIntegrationTest {
     }
 
     @Test
+    void installAcceptsVersionShorthandWithoutProvider() throws Exception {
+        Path source = tempDir.resolve("source.jar");
+        Files.writeString(source, "jar body");
+
+        PluginLockCli cli = new PluginLockCli(new ServerDownloads(HttpClient.newHttpClient()), manifest -> {
+            assertEquals("luckperms", manifest.getPlugins().getFirst().getId());
+            assertEquals("modrinth", manifest.getPlugins().getFirst().getProvider());
+            assertEquals("5.4.0", manifest.getPlugins().getFirst().getVersion());
+
+            PluginLock lock = new PluginLock();
+            lock.setMinecraftVersion("1.21.4");
+            lock.setLoader("paper");
+            lock.setPlugins(java.util.List.of(lockedPlugin("luckperms", "luckperms.jar", source)));
+            return lock;
+        });
+
+        CliResult result = executeCapturing(cli, tempDir, "", "install", "luckperms@5.4.0",
+                "--provider", "modrinth", "--minecraft", "1.21.4", "--server", "paper", "--yes");
+
+        assertEquals(0, result.exitCode());
+        PluginManifest manifest = PluginLockFiles.readManifest(tempDir.resolve(PluginLockFiles.MANIFEST_FILE));
+        assertEquals("luckperms", manifest.getPlugins().getFirst().getId());
+        assertEquals("5.4.0", manifest.getPlugins().getFirst().getVersion());
+        assertTrue(Files.exists(tempDir.resolve("plugins/luckperms.jar")));
+    }
+
+    @Test
     void addProviderShorthandOverridesProviderOption() throws Exception {
         assertEquals(0, execute(tempDir, "add", "hangar:Chunky", "--provider", "modrinth", "--yes"));
 
@@ -409,6 +436,21 @@ class PluginLockCliIntegrationTest {
             assertTrue(Files.exists(tempDir.resolve(PluginLockFiles.LOCK_FILE)));
             assertEquals("paper 1.21.4 jar", Files.readString(tempDir.resolve("paper-1.21.4-101.jar")));
             assertTrue(Files.exists(tempDir.resolve("plugins/local.jar")));
+        }
+    }
+
+    @Test
+    void installMinecraftOnlyInitializesEmptyProject() throws Exception {
+        try (ApiServer server = apiServer()) {
+            CliResult result = executeCapturingWithApi(server, tempDir, "install", "--minecraft", "26.1.2", "--yes");
+
+            PluginManifest manifest = PluginLockFiles.readManifest(tempDir.resolve(PluginLockFiles.MANIFEST_FILE));
+            PluginLock lock = PluginLockFiles.readLock(tempDir.resolve(PluginLockFiles.LOCK_FILE));
+            assertEquals(0, result.exitCode());
+            assertEquals("26.1.2", manifest.getMinecraftVersion());
+            assertEquals("paper", manifest.getLoader());
+            assertEquals("paper-26.1.2-140.jar", lock.getServer().getFileName());
+            assertTrue(result.output().contains("No locked plugins to install"));
         }
     }
 
@@ -814,6 +856,38 @@ class PluginLockCliIntegrationTest {
 
         assertEquals(0, result.exitCode());
         assertTrue(result.output().contains("No locked plugins matched missing"));
+    }
+
+    @Test
+    void updateInteractiveUpdatesSelectedPluginOnly() throws Exception {
+        PluginManifest manifest = new PluginManifest();
+        manifest.setMinecraftVersion("1.21.4");
+        manifest.setLoader("paper");
+        manifest.setPlugins(java.util.List.of(
+                new dev.noah.pluginlock.core.model.PluginRequest("update-me", "modrinth", "latest"),
+                new dev.noah.pluginlock.core.model.PluginRequest("keep-me", "modrinth", "latest")));
+        PluginLockFiles.writeManifest(tempDir.resolve(PluginLockFiles.MANIFEST_FILE), manifest);
+
+        PluginLock existing = new PluginLock();
+        existing.setPlugins(java.util.List.of(pluginRecord("update-me", "1.0.0"), pluginRecord("keep-me", "1.0.0")));
+        PluginLockFiles.writeLock(tempDir.resolve(PluginLockFiles.LOCK_FILE), existing);
+
+        PluginLockCli cli = new PluginLockCli(new ServerDownloads(HttpClient.newHttpClient()), ignored -> {
+            PluginLock lock = new PluginLock();
+            lock.setMinecraftVersion("1.21.4");
+            lock.setLoader("paper");
+            lock.setPlugins(java.util.List.of(pluginRecord("update-me", "2.0.0"), pluginRecord("keep-me", "2.0.0")));
+            return lock;
+        });
+
+        CliResult result = executeCapturing(cli, tempDir, "1\n", "update", "--interactive");
+        PluginLock updated = PluginLockFiles.readLock(tempDir.resolve(PluginLockFiles.LOCK_FILE));
+
+        assertEquals(0, result.exitCode());
+        assertTrue(result.output().contains("Select plugins to update:"));
+        assertTrue(result.output().contains("Updated 1 selected plugin(s)"));
+        assertEquals("2.0.0", updated.getPlugins().get(0).getVersionName());
+        assertEquals("1.0.0", updated.getPlugins().get(1).getVersionName());
     }
 
     @Test

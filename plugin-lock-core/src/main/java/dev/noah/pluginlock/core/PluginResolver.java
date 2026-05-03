@@ -1,9 +1,11 @@
 package dev.noah.pluginlock.core;
 
 import dev.noah.pluginlock.core.model.LockedPlugin;
+import dev.noah.pluginlock.core.model.PluginInspection;
 import dev.noah.pluginlock.core.model.PluginManifest;
 import dev.noah.pluginlock.core.model.PluginRequest;
 import dev.noah.pluginlock.core.model.PluginLock;
+import dev.noah.pluginlock.core.model.PluginResolutionCheck;
 import dev.noah.pluginlock.core.provider.HangarProvider;
 import dev.noah.pluginlock.core.provider.ModrinthProvider;
 
@@ -40,7 +42,30 @@ public final class PluginResolver {
         return lock;
     }
 
-    private LockedPlugin resolve(PluginRequest request, String minecraftVersion, String loader)
+    public PluginInspection inspect(PluginRequest request, String loader) throws IOException, InterruptedException {
+        PluginInspection inspection = new PluginInspection();
+        if ("modrinth".equalsIgnoreCase(request.getProvider())) {
+            inspection.setMetadata(modrinthProvider.fetchMetadata(request.getId()));
+            inspection.setVersions(modrinthProvider.versions(request.getId(), loader));
+            return inspection;
+        }
+        if ("hangar".equalsIgnoreCase(request.getProvider())) {
+            inspection.setMetadata(hangarProvider.fetchMetadata(request.getId()));
+            inspection.setVersions(hangarProvider.versions(request.getId(), loader));
+            return inspection;
+        }
+        throw new IllegalArgumentException("Unsupported provider: " + request.getProvider());
+    }
+
+    public PluginResolutionCheck check(PluginRequest request, String minecraftVersion, String loader) {
+        try {
+            return PluginResolutionCheck.ok(resolve(request, minecraftVersion, loader));
+        } catch (Exception exception) {
+            return PluginResolutionCheck.failed(exception.getMessage());
+        }
+    }
+
+    public LockedPlugin resolve(PluginRequest request, String minecraftVersion, String loader)
             throws IOException, InterruptedException {
         if ("modrinth".equalsIgnoreCase(request.getProvider())) {
             return modrinthProvider.resolve(request, minecraftVersion, loader);

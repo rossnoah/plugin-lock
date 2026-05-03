@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.noah.pluginlock.core.model.LockedPlugin;
 import dev.noah.pluginlock.core.model.PluginMetadata;
 import dev.noah.pluginlock.core.model.PluginRequest;
+import dev.noah.pluginlock.core.model.PluginVersion;
 
 import java.io.IOException;
 import java.net.URI;
@@ -87,6 +88,29 @@ public final class HangarProvider {
             results.add(metadata);
         }
         return results;
+    }
+
+    public List<PluginVersion> versions(String id, String loader) throws IOException, InterruptedException {
+        JsonNode project = project(id);
+        String platform = loader == null || loader.isBlank() ? null : platform(loader);
+        java.util.ArrayList<PluginVersion> result = new java.util.ArrayList<>();
+        for (JsonNode version : get(projectPath(project) + "/versions?limit=100").path("result")) {
+            PluginVersion info = new PluginVersion();
+            info.setId(version.path("name").asText());
+            info.setName(version.path("name").asText());
+            if (platform == null) {
+                info.setLoaders(textValues(version.path("platformDependencies").fieldNames()));
+                info.setMinecraftVersions(allPlatformVersions(version));
+            } else {
+                info.setLoaders(List.of(platform.toLowerCase(Locale.ROOT)));
+                info.setMinecraftVersions(textValues(version.path("platformDependencies").path(platform)));
+                JsonNode download = version.path("downloads").path(platform);
+                info.setFileName(download.path("fileInfo").path("name").asText(""));
+                info.setDownloadable(!download.path("downloadUrl").asText("").isBlank());
+            }
+            result.add(info);
+        }
+        return result;
     }
 
     private JsonNode project(String id) throws IOException, InterruptedException {
@@ -277,5 +301,37 @@ public final class HangarProvider {
 
     private static String query(String value) {
         return URLEncoder.encode(value, StandardCharsets.UTF_8);
+    }
+
+    private static List<String> textValues(java.util.Iterator<String> values) {
+        java.util.ArrayList<String> result = new java.util.ArrayList<>();
+        while (values.hasNext()) {
+            result.add(values.next().toLowerCase(Locale.ROOT));
+        }
+        return result;
+    }
+
+    private static List<String> textValues(JsonNode values) {
+        java.util.ArrayList<String> result = new java.util.ArrayList<>();
+        if (values.isArray()) {
+            for (JsonNode value : values) {
+                result.add(value.asText());
+            }
+        }
+        return result;
+    }
+
+    private static List<String> allPlatformVersions(JsonNode version) {
+        java.util.ArrayList<String> result = new java.util.ArrayList<>();
+        JsonNode dependencies = version.path("platformDependencies");
+        dependencies.fieldNames().forEachRemaining(platform -> {
+            for (JsonNode value : dependencies.path(platform)) {
+                String text = value.asText();
+                if (!result.contains(text)) {
+                    result.add(text);
+                }
+            }
+        });
+        return result;
     }
 }
