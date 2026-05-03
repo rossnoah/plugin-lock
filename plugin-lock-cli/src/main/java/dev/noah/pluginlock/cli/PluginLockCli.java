@@ -37,6 +37,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.Callable;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import sun.misc.Signal;
 
@@ -66,6 +67,8 @@ public final class PluginLockCli implements Callable<Integer> {
     private static final String DEFAULT_LOADER = "paper";
     private static final String DEFAULT_SERVER_MEMORY = "2G";
     private static final int INTERRUPTED_EXIT_CODE = 130;
+    private static final long SERVER_INTERRUPT_GRACE_SECONDS = 30;
+    private static final long SERVER_DESTROY_GRACE_SECONDS = 2;
 
     @Option(names = "--project-dir", defaultValue = ".", description = "Directory containing server-lock files.")
     Path projectDir;
@@ -964,9 +967,12 @@ public final class PluginLockCli implements Callable<Integer> {
             try {
                 return process.waitFor();
             } catch (InterruptedException exception) {
+                if (process.waitFor(SERVER_INTERRUPT_GRACE_SECONDS, TimeUnit.SECONDS)) {
+                    return process.exitValue();
+                }
                 process.destroy();
                 try {
-                    if (!process.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)) {
+                    if (!process.waitFor(SERVER_DESTROY_GRACE_SECONDS, TimeUnit.SECONDS)) {
                         process.destroyForcibly();
                     }
                 } catch (InterruptedException forceException) {
@@ -2189,7 +2195,6 @@ public final class PluginLockCli implements Callable<Integer> {
             }
             mainThread.interrupt();
             Output.error(cli.json, "Operation cancelled");
-            System.exit(INTERRUPTED_EXIT_CODE);
         });
     }
 }

@@ -12,11 +12,13 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.PrintStream;
+import java.time.Duration;
 import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PluginLockCliTest {
@@ -301,6 +303,27 @@ class PluginLockCliTest {
         assertTrue(command.contains("-jar"));
         assertTrue(command.contains("server.jar"));
         assertEquals("--nogui", command.getLast());
+    }
+
+    @Test
+    void runCommandReturnsWhenServerProcessStops() throws Exception {
+        java.nio.file.Path tempDir = java.nio.file.Files.createTempDirectory("plugin-lock-run-test");
+        try {
+            java.nio.file.Path javaExecutable = Path.of(System.getProperty("java.home"), "bin", "java");
+            CommandLine commandLine = PluginLockCli.commandLine(new PluginLockCli());
+
+            int exitCode = assertTimeoutPreemptively(Duration.ofSeconds(10), () -> commandLine.execute(
+                    "--project-dir", tempDir.toString(),
+                    "run",
+                    "--memory", "128M",
+                    "--jar", tempDir.resolve("missing-server.jar").toString(),
+                    "--java", javaExecutable.toString()
+            ));
+
+            assertEquals(1, exitCode);
+        } finally {
+            java.nio.file.Files.deleteIfExists(tempDir);
+        }
     }
 
     private static PluginMetadata metadata(String provider, String id) {
