@@ -50,13 +50,15 @@ import java.util.concurrent.Callable;
                 PluginLockCli.ListCommand.class,
                 PluginLockCli.DoctorCommand.class,
                 PluginLockCli.UpdateCommand.class,
-                PluginLockCli.SearchCommand.class
+                PluginLockCli.SearchCommand.class,
+                PluginLockCli.RunCommand.class
         }
 )
 public final class PluginLockCli implements Callable<Integer> {
     private static final ObjectMapper JSON = new ObjectMapper().findAndRegisterModules();
     private static final String DEFAULT_MINECRAFT_VERSION = "1.21.4";
     private static final String DEFAULT_LOADER = "paper";
+    private static final String DEFAULT_SERVER_MEMORY = "2G";
 
     @Option(names = "--project-dir", defaultValue = ".", description = "Directory containing server-lock files.")
     Path projectDir;
@@ -819,6 +821,137 @@ public final class PluginLockCli implements Callable<Integer> {
             PluginLock lock = PluginLockFiles.readLock(lockfilePath);
             parent.output().list(lock);
             return 0;
+        }
+    }
+
+    @Command(name = "run", mixinStandardHelpOptions = true, description = "Start the locked server jar with optimized JVM flags.")
+    static final class RunCommand implements Callable<Integer> {
+        @ParentCommand
+        PluginLockCli parent;
+
+        @Option(names = {"-m", "--memory"}, description = "Heap size for -Xms and -Xmx, for example 2G, 2048M, or 4096M.")
+        String memory;
+
+        @Option(names = "--jar", description = "Server jar to run. Defaults to the locked server jar.")
+        Path jar;
+
+        @Option(names = "--java", defaultValue = "java", description = "Java executable.")
+        String javaExecutable;
+
+        @Option(names = "--dry-run", description = "Print the Java command without starting the server.")
+        boolean dryRun;
+
+        @Override
+        public Integer call() throws Exception {
+            Path serverJar = resolveServerJar();
+            String heap = resolveMemory();
+            List<String> command = serverCommand(javaExecutable, heap, serverJar);
+            if (dryRun) {
+                System.out.println(formatCommand(command));
+                return 0;
+            }
+            Process process = new ProcessBuilder(command)
+                    .directory(parent.effectiveProjectDir().toFile())
+                    .inheritIO()
+                    .start();
+            return process.waitFor();
+        }
+
+        private String resolveMemory() throws Exception {
+            if (memory != null && !memory.isBlank()) {
+                return normalizeMemory(memory);
+            }
+            Path manifestPath = parent.resolve(PluginLockFiles.MANIFEST_FILE);
+            PluginManifest manifest = Files.exists(manifestPath)
+                    ? PluginLockFiles.readManifest(manifestPath)
+                    : new PluginManifest();
+            if (manifest.getRunMemory() != null && !manifest.getRunMemory().isBlank()) {
+                return normalizeMemory(manifest.getRunMemory());
+            }
+            String heap = normalizeMemory(promptMemory());
+            manifest.setRunMemory(heap);
+            PluginLockFiles.writeManifest(manifestPath, manifest);
+            return heap;
+        }
+
+        private Path resolveServerJar() throws Exception {
+            if (jar != null) {
+                return jar.isAbsolute() ? jar : parent.effectiveProjectDir().resolve(jar);
+            }
+            Path lockfilePath = parent.resolve(PluginLockFiles.LOCK_FILE);
+            if (Files.notExists(lockfilePath)) {
+                throw new IllegalStateException("No server-lock.lock.json found. Run `pl init` first or pass --jar.");
+            }
+            PluginLock lock = PluginLockFiles.readLock(lockfilePath);
+            LockedServer server = lock.getServer();
+            if (server == null || server.getFileName() == null || server.getFileName().isBlank()) {
+                throw new IllegalStateException("No locked server jar found. Run `pl init` first or pass --jar.");
+            }
+            return parent.effectiveProjectDir().resolve(server.getFileName());
+        }
+
+        private static String promptMemory() {
+            String answer = readConfirmation("Server memory [" + DEFAULT_SERVER_MEMORY + "]: ");
+            return answer.isBlank() ? DEFAULT_SERVER_MEMORY : answer;
+        }
+
+        static List<String> serverCommand(String javaExecutable, String memory, Path serverJar) {
+            List<String> command = new ArrayList<>();
+            command.add(javaExecutable);
+            command.add("-Xms" + memory);
+            command.add("-Xmx" + memory);
+            command.addAll(List.of(
+                    "--add-modules=jdk.incubator.vector",
+                    "-XX:+UseG1GC",
+                    "-XX:+ParallelRefProcEnabled",
+                    "-XX:MaxGCPauseMillis=200",
+                    "-XX:+UnlockExperimentalVMOptions",
+                    "-XX:+DisableExplicitGC",
+                    "-XX:+AlwaysPreTouch",
+                    "-XX:G1HeapWastePercent=5",
+                    "-XX:G1MixedGCCountTarget=4",
+                    "-XX:InitiatingHeapOccupancyPercent=15",
+                    "-XX:G1MixedGCLiveThresholdPercent=90",
+                    "-XX:G1RSetUpdatingPauseTimePercent=5",
+                    "-XX:SurvivorRatio=32",
+                    "-XX:+PerfDisableSharedMem",
+                    "-XX:MaxTenuringThreshold=1",
+                    "-Dusing.aikars.flags=https://mcflags.emc.gs",
+                    "-Daikars.new.flags=true",
+                    "-XX:G1NewSizePercent=30",
+                    "-XX:G1MaxNewSizePercent=40",
+                    "-XX:G1HeapRegionSize=8M",
+                    "-XX:G1ReservePercent=20",
+                    "-jar",
+                    serverJar.toString()
+            ));
+            command.add("--nogui");
+            return command;
+        }
+
+        static String normalizeMemory(String memory) {
+            String normalized = memory.trim().toUpperCase(Locale.ROOT);
+            if (normalized.endsWith("GB")) {
+                normalized = normalized.substring(0, normalized.length() - 2) + "G";
+            }
+            if (normalized.endsWith("MB")) {
+                normalized = normalized.substring(0, normalized.length() - 2) + "M";
+            }
+            if (normalized.matches("\\d+")) {
+                return normalized + "M";
+            }
+            if (!normalized.matches("\\d+[MG]")) {
+                throw new IllegalArgumentException("Memory must look like 2048M, 2G, or 2048");
+            }
+            return normalized;
+        }
+
+        static String formatCommand(List<String> command) {
+            return String.join(" ", command.stream().map(RunCommand::quoteIfNeeded).toList());
+        }
+
+        private static String quoteIfNeeded(String value) {
+            return value.matches("[A-Za-z0-9_./:=+@%-]+") ? value : "'" + value.replace("'", "'\\''") + "'";
         }
     }
 

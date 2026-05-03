@@ -208,6 +208,31 @@ class PluginLockCliTest {
         assertTrue(commandLine.getSubcommands().containsKey("doctor"));
         assertTrue(commandLine.getSubcommands().containsKey("search"));
         assertTrue(commandLine.getSubcommands().containsKey("update"));
+        assertTrue(commandLine.getSubcommands().containsKey("run"));
+    }
+
+    @Test
+    void runCommandNormalizesMemoryValues() {
+        assertEquals("2048M", PluginLockCli.RunCommand.normalizeMemory("2048"));
+        assertEquals("2048M", PluginLockCli.RunCommand.normalizeMemory("2048m"));
+        assertEquals("2G", PluginLockCli.RunCommand.normalizeMemory("2g"));
+        assertEquals("2G", PluginLockCli.RunCommand.normalizeMemory("2gb"));
+        assertEquals("512M", PluginLockCli.RunCommand.normalizeMemory("512mb"));
+    }
+
+    @Test
+    void runCommandBuildsOptimizedServerCommand() {
+        List<String> command = PluginLockCli.RunCommand.serverCommand("java", "2048M", Path.of("server.jar"));
+
+        assertEquals("java", command.getFirst());
+        assertTrue(command.contains("-Xms2048M"));
+        assertTrue(command.contains("-Xmx2048M"));
+        assertTrue(command.contains("--add-modules=jdk.incubator.vector"));
+        assertTrue(command.contains("-XX:+UseG1GC"));
+        assertTrue(command.contains("-Dusing.aikars.flags=https://mcflags.emc.gs"));
+        assertTrue(command.contains("-jar"));
+        assertTrue(command.contains("server.jar"));
+        assertEquals("--nogui", command.getLast());
     }
 
     private static PluginMetadata metadata(String provider, String id) {

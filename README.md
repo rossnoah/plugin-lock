@@ -102,6 +102,12 @@ pl list
 pl doctor
 ```
 
+Start the server:
+
+```sh
+pl run
+```
+
 ## Core Workflow
 
 | Step | Command | What it does |
@@ -111,6 +117,7 @@ pl doctor
 | 3 | `pl list` | Shows the locked server and plugin set. |
 | 4 | `pl doctor` | Checks for missing files, hash mismatches, and lockfile problems. |
 | 5 | `pl ci` | Reinstalls exactly from the lockfile. |
+| 6 | `pl run` | Starts the locked server jar with optimized JVM flags. |
 
 ## Everyday Commands
 
@@ -155,6 +162,10 @@ pl doctor
     <td>Strict reinstall</td>
     <td><code>pl ci</code></td>
   </tr>
+  <tr>
+    <td>Start the server</td>
+    <td><code>pl run</code></td>
+  </tr>
 </table>
 
 ## Power User Mode
@@ -173,6 +184,7 @@ Run against another server directory:
 ```sh
 pl --project-dir /srv/minecraft install luckperms
 pl --project-dir /srv/minecraft ci
+pl --project-dir /srv/minecraft run
 ```
 
 Use JSON output in automation:
@@ -223,6 +235,16 @@ pl search chunky --provider modrinth
 pl search placeholder --provider hangar
 ```
 
+### Run
+
+```sh
+pl run
+pl run --memory 4G
+pl run --jar server.jar
+```
+
+`pl run` asks for server memory the first time, defaults to `2G`, stores the answer as `runMemory` in `server-lock.json`, and reuses it on later runs. `--memory` is a one-run override and does not rewrite the saved value. By default, `pl run` starts the server jar recorded in the lockfile; use `--jar` to run a different jar. Servers start with optimized JVM flags and `--nogui`.
+
 ### Add Without Downloading
 
 ```sh
@@ -255,7 +277,7 @@ pl uninstall luckperms
 
 | File | Purpose |
 | --- | --- |
-| `server-lock.json` | Editable manifest for the plugins you want. |
+| `server-lock.json` | Editable manifest for the plugins you want, plus saved run settings like `runMemory`. |
 | `server-lock.lock.json` | Generated lockfile with exact resolved artifacts. |
 | `paper-*.jar` / `purpur-*.jar` | Selected server jar. |
 | `plugins/*.jar` | Installed plugin jars. |
@@ -270,6 +292,7 @@ Commit `server-lock.json` and `server-lock.lock.json` if you want reproducible s
 {
   "minecraftVersion": "1.21.4",
   "loader": "paper",
+  "runMemory": "2G",
   "plugins": [
     {
       "id": "luckperms",

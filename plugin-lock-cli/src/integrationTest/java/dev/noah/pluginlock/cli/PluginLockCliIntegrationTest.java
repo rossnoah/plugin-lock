@@ -529,6 +529,39 @@ class PluginLockCliIntegrationTest {
     }
 
     @Test
+    void runPromptsForMemoryOnceAndStoresItInManifest() throws Exception {
+        writeLockedServer("paper.jar");
+
+        CliResult firstRun = executeCapturingWithInput(tempDir, "3gb\n", "run", "--dry-run");
+        PluginManifest manifest = PluginLockFiles.readManifest(tempDir.resolve(PluginLockFiles.MANIFEST_FILE));
+        CliResult secondRun = executeCapturingWithInput(tempDir, "", "run", "--dry-run");
+
+        assertEquals(0, firstRun.exitCode());
+        assertTrue(firstRun.output().contains("Server memory [2G]:"));
+        assertTrue(firstRun.output().contains("-Xms3G"));
+        assertEquals("3G", manifest.getRunMemory());
+        assertEquals(0, secondRun.exitCode());
+        assertFalse(secondRun.output().contains("Server memory [2G]:"));
+        assertTrue(secondRun.output().contains("-Xms3G"));
+    }
+
+    @Test
+    void runMemoryOptionDoesNotOverwriteStoredMemory() throws Exception {
+        writeLockedServer("paper.jar");
+        PluginManifest manifest = new PluginManifest();
+        manifest.setRunMemory("2G");
+        PluginLockFiles.writeManifest(tempDir.resolve(PluginLockFiles.MANIFEST_FILE), manifest);
+
+        CliResult result = executeCapturing(tempDir, "run", "--memory", "4G", "--dry-run");
+        PluginManifest restored = PluginLockFiles.readManifest(tempDir.resolve(PluginLockFiles.MANIFEST_FILE));
+
+        assertEquals(0, result.exitCode());
+        assertFalse(result.output().contains("Server memory [2G]:"));
+        assertTrue(result.output().contains("-Xms4G"));
+        assertEquals("2G", restored.getRunMemory());
+    }
+
+    @Test
     void listJsonIncludesLockedPlugins() throws Exception {
         writeSingleLockedPlugin("local", "local.jar");
 
@@ -1105,6 +1138,17 @@ class PluginLockCliIntegrationTest {
     }
 
     private record CliResult(int exitCode, String output) {
+    }
+
+    private void writeLockedServer(String fileName) throws Exception {
+        PluginLock lock = new PluginLock();
+        dev.noah.pluginlock.core.model.LockedServer server = new dev.noah.pluginlock.core.model.LockedServer();
+        server.setProvider("paper");
+        server.setMinecraftVersion("1.21.4");
+        server.setBuild("101");
+        server.setFileName(fileName);
+        lock.setServer(server);
+        PluginLockFiles.writeLock(tempDir.resolve(PluginLockFiles.LOCK_FILE), lock);
     }
 
     private static LockedPlugin lockedPlugin(String id, String fileName, Path source) throws Exception {
