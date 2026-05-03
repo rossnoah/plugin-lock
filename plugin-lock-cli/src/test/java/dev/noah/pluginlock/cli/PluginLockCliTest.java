@@ -81,6 +81,25 @@ class PluginLockCliTest {
     }
 
     @Test
+    void yesInstallsSelectedProviderAfterSwitching() {
+        InputStream originalIn = System.in;
+        try {
+            System.setIn(new ByteArrayInputStream("2\ny\n".getBytes(StandardCharsets.UTF_8)));
+
+            PluginLockCli.PluginSelection selection = PluginLockCli.selectAndConfirmProvider(List.of(
+                    metadata("modrinth", "viaversion"),
+                    metadata("hangar", "ViaVersion")
+            ), "latest");
+
+            assertEquals(PluginLockCli.PluginSelectionStatus.SELECTED, selection.status());
+            assertEquals("hangar", selection.request().getProvider());
+            assertEquals("ViaVersion", selection.request().getId());
+        } finally {
+            System.setIn(originalIn);
+        }
+    }
+
+    @Test
     void noInstallActionExitsCommand() {
         InputStream originalIn = System.in;
         try {
