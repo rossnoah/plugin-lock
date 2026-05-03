@@ -17,6 +17,11 @@ class PluginLockPaperPackagingTest {
             assertTrue(pluginYml.contains("name: PluginLock"));
             assertTrue(pluginYml.contains("main: dev.noah.pluginlock.paper.PluginLockPaperPlugin"));
             assertTrue(pluginYml.contains("pluginlock:"));
+            assertTrue(pluginYml.contains("aliases: [plock]"));
+            assertTrue(pluginYml.contains("pluginlock.use:"));
+            assertTrue(pluginYml.contains("pluginlock.list:"));
+            assertTrue(pluginYml.contains("pluginlock.doctor:"));
+            assertTrue(pluginYml.contains("pluginlock.admin:"));
         }
     }
 

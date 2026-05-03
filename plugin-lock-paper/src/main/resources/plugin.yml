@@ -3,12 +3,37 @@ version: 0.1.0
 main: dev.noah.pluginlock.paper.PluginLockPaperPlugin
 api-version: '1.21'
 author: Noah
+description: Install and inspect plugin-lock lockfiles from a Paper server.
 commands:
   pluginlock:
-    description: Install plugins from server-lock.lock.json.
-    usage: /pluginlock install
-    permission: pluginlock.install
+    description: Install and inspect plugins from server-lock.lock.json.
+    usage: /pluginlock <install|list|doctor|status|help>
+    aliases: [plock]
+    permission: pluginlock.use
 permissions:
+  pluginlock.use:
+    description: Allows using Plugin Lock commands.
+    default: op
   pluginlock.install:
     description: Allows installing plugins from the lockfile.
     default: op
+    children:
+      pluginlock.use: true
+  pluginlock.list:
+    description: Allows listing locked plugins.
+    default: op
+    children:
+      pluginlock.use: true
+  pluginlock.doctor:
+    description: Allows checking lockfile health.
+    default: op
+    children:
+      pluginlock.use: true
+  pluginlock.admin:
+    description: Allows all Plugin Lock commands.
+    default: op
+    children:
+      pluginlock.use: true
+      pluginlock.install: true
+      pluginlock.list: true
+      pluginlock.doctor: true
