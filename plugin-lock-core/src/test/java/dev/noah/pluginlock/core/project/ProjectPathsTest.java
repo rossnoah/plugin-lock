@@ -10,11 +10,15 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class ProjectPathsTest {
     @Test
     void resolvesProjectFilesAndPluginDirectory() {
-        ProjectPaths paths = new ProjectPaths(Path.of("/tmp/plugin-lock-project"));
+        Path projectRoot = Path.of(System.getProperty("java.io.tmpdir"), "plugin-lock-project")
+                .toAbsolutePath()
+                .normalize();
+        Path absolutePluginsDir = projectRoot.resolveSibling("plugins");
+        ProjectPaths paths = new ProjectPaths(projectRoot);
 
-        assertEquals(Path.of("/tmp/plugin-lock-project", PluginLockFiles.MANIFEST_FILE), paths.manifestPath());
-        assertEquals(Path.of("/tmp/plugin-lock-project", PluginLockFiles.LOCK_FILE), paths.lockPath());
-        assertEquals(Path.of("/tmp/plugin-lock-project/plugins"), paths.pluginsDir(Path.of("plugins")));
-        assertEquals(Path.of("/srv/plugins"), paths.pluginsDir(Path.of("/srv/plugins")));
+        assertEquals(projectRoot.resolve(PluginLockFiles.MANIFEST_FILE), paths.manifestPath());
+        assertEquals(projectRoot.resolve(PluginLockFiles.LOCK_FILE), paths.lockPath());
+        assertEquals(projectRoot.resolve("plugins"), paths.pluginsDir(Path.of("plugins")));
+        assertEquals(absolutePluginsDir, paths.pluginsDir(absolutePluginsDir));
     }
 }
