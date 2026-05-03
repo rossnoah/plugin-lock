@@ -2,7 +2,7 @@ name: PluginLock
 version: 0.1.0
 main: dev.noah.pluginlock.paper.PluginLockPaperPlugin
 api-version: '1.21'
-author: Noah
+author: Noah Ross
 description: Install and inspect plugin-lock lockfiles from a Paper server.
 commands:
   pluginlock:

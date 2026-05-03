@@ -2,9 +2,9 @@ project:
   name: plugin-lock
   description: A package manager for Minecraft server plugins.
   authors:
-    - Noah
-  license: UNLICENSED
-  copyright: Copyright (c) 2026 Noah
+    - Noah Ross
+  license: MIT
+  copyright: Copyright (c) 2026 Noah Ross
   links:
     homepage: https://github.com/rossnoah/plugin-lock
 

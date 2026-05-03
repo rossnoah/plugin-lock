@@ -91,3 +91,7 @@ Search before installing:
 pl search luckperms
 pl info luckperms
 ```
+
+## License
+
+MIT
