@@ -18,6 +18,11 @@ hs_err_pid*
 *.deb
 *.rpm
 
+# Jekyll docs output
+docs/_site/
+docs/.jekyll-cache/
+docs/.sass-cache/
+
 # IDE/editor
 .idea/
 *.iml

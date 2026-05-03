@@ -1,0 +1,10 @@
+title: plugin-lock Documentation
+description: A package manager for Minecraft server plugins.
+url: "https://rossnoah.github.io"
+baseurl: "/plugin-lock"
+markdown: kramdown
+highlighter: rouge
+permalink: pretty
+exclude:
+  - Gemfile
+  - Gemfile.lock

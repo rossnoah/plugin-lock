@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% if page.title and page.title != site.title %}{{ page.title }} - {{ site.title }}{% else %}{{ site.title }}{% endif %}</title>
+    <meta name="description" content="{{ site.description }}">
+    {% if page.redirect_to_home %}
+    <meta http-equiv="refresh" content="0; url={{ "/" | relative_url }}#command-reference">
+    {% endif %}
+    <link rel="stylesheet" href="{{ "/assets/site.css" | relative_url }}">
+  </head>
+  <body>
+    <div class="site-shell">
+      <aside class="sidebar" aria-label="Primary navigation">
+        <a class="brand" href="{{ "/" | relative_url }}">plugin-lock</a>
+        <nav class="nav">
+          <a href="https://github.com/rossnoah/plugin-lock">GitHub</a>
+          <a href="{{ "/" | relative_url }}">Documentation</a>
+        </nav>
+        <nav class="nav nav-section" aria-label="Command navigation">
+          <span class="nav-heading">Reference</span>
+          <a href="{{ "/" | relative_url }}#command-reference">Command Reference</a>
+          <a href="{{ "/" | relative_url }}#pl-init"><code>pl init</code></a>
+          <a href="{{ "/" | relative_url }}#pl-add"><code>pl add</code></a>
+          <a href="{{ "/" | relative_url }}#pl-lock"><code>pl lock</code></a>
+          <a href="{{ "/" | relative_url }}#pl-install"><code>pl install</code></a>
+          <a href="{{ "/" | relative_url }}#pl-clean-install"><code>pl clean-install</code></a>
+          <a href="{{ "/" | relative_url }}#pl-remove"><code>pl remove</code></a>
+          <a href="{{ "/" | relative_url }}#pl-list"><code>pl list</code></a>
+          <a href="{{ "/" | relative_url }}#pl-doctor"><code>pl doctor</code></a>
+          <a href="{{ "/" | relative_url }}#pl-update"><code>pl update</code></a>
+          <a href="{{ "/" | relative_url }}#pl-search"><code>pl search</code></a>
+          <a href="{{ "/" | relative_url }}#pl-info"><code>pl info</code></a>
+          <a href="{{ "/" | relative_url }}#pl-run"><code>pl run</code></a>
+        </nav>
+      </aside>
+
+      <div class="page">
+        <header class="page-header">
+          <h1>{{ page.title }}</h1>
+          <nav class="header-links" aria-label="Project links">
+            <a href="https://github.com/rossnoah/plugin-lock">GitHub</a>
+          </nav>
+        </header>
+        <main class="content">
+          {{ content }}
+        </main>
+      </div>
+    </div>
+    <script src="{{ "/assets/site.js" | relative_url }}"></script>
+  </body>
+</html>

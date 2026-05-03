@@ -10,6 +10,10 @@
 </p>
 
 <p>
+  <a href="https://rossnoah.github.io/plugin-lock/">Documentation</a>
+</p>
+
+<p>
   <code>pl init</code>
   &nbsp;>&nbsp;
   <code>pl install luckperms viaversion</code>
@@ -62,6 +66,8 @@ That creates the server files, installs plugins into `plugins/`, checks the fold
 | Reinstall exactly from the lockfile | `pl ci`                           |
 | Start the server                    | `pl run`                          |
 
+For full documentation, see [plugin-lock Documentation](https://rossnoah.github.io/plugin-lock/).
+
 ## Installing Plugins
 
 Use plugin names:
@@ -94,4 +100,4 @@ pl info luckperms
 
 ## License
 
-MIT
+[MIT](LICENSE)
