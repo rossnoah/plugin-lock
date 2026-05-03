@@ -156,10 +156,14 @@ class PluginLockCliTest {
 
     @Test
     void pluginsDirResolvesRelativePathAgainstEffectiveProjectDir() {
-        ProjectPaths paths = new ProjectPaths(Path.of("/tmp/plugin-lock-project"));
+        Path projectRoot = Path.of(System.getProperty("java.io.tmpdir"), "plugin-lock-project")
+                .toAbsolutePath()
+                .normalize();
+        Path absolutePluginsDir = projectRoot.resolveSibling("minecraft").resolve("plugins");
+        ProjectPaths paths = new ProjectPaths(projectRoot);
 
-        assertEquals(Path.of("/tmp/plugin-lock-project/plugins"), paths.pluginsDir(Path.of("plugins")));
-        assertEquals(Path.of("/var/minecraft/plugins"), paths.pluginsDir(Path.of("/var/minecraft/plugins")));
+        assertEquals(projectRoot.resolve("plugins"), paths.pluginsDir(Path.of("plugins")));
+        assertEquals(absolutePluginsDir, paths.pluginsDir(absolutePluginsDir));
     }
 
     @Test
