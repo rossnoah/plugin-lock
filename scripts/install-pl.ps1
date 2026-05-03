@@ -5,13 +5,63 @@ $version = if ($env:PLUGIN_LOCK_VERSION) { $env:PLUGIN_LOCK_VERSION } else { "la
 $installRoot = if ($env:PLUGIN_LOCK_HOME) { $env:PLUGIN_LOCK_HOME } else { Join-Path $HOME ".plugin-lock" }
 $binDir = if ($env:PLUGIN_LOCK_BIN_DIR) { $env:PLUGIN_LOCK_BIN_DIR } else { Join-Path $HOME "bin" }
 
-try {
-    $javaMajor = (& java -version 2>&1 | Select-Object -First 1) -replace '.*version "([0-9]+).*', '$1'
-    if ([int]$javaMajor -lt 21) {
-        throw "Java 21 or newer is required"
+function Get-JavaVersionText {
+    param([string]$JavaExecutable)
+
+    $output = & $JavaExecutable -version 2>&1
+    return ($output | ForEach-Object { "$_" }) -join "`n"
+}
+
+function Get-JavaMajorVersion {
+    param([string]$VersionText)
+
+    if ($VersionText -match 'version "1\.(\d+)') {
+        return [int]$Matches[1]
     }
-} catch {
-    throw "Java 21 or newer is required"
+    if ($VersionText -match 'version "(\d+)') {
+        return [int]$Matches[1]
+    }
+    if ($VersionText -match '^\S+\s+(\d+)(?:\.|\s|$)') {
+        return [int]$Matches[1]
+    }
+
+    return $null
+}
+
+function Assert-Java21 {
+    param(
+        [string]$JavaExecutable,
+        [string]$Source
+    )
+
+    try {
+        $versionText = Get-JavaVersionText $JavaExecutable
+        $javaMajor = Get-JavaMajorVersion $versionText
+    } catch {
+        throw "Java 21 or newer is required, but $Source could not be executed."
+    }
+
+    if ($null -eq $javaMajor) {
+        throw "Java 21 or newer is required, but the version from $Source could not be parsed."
+    }
+    if ($javaMajor -lt 21) {
+        throw "Java 21 or newer is required; $Source is Java $javaMajor."
+    }
+}
+
+if ($env:JAVA_HOME) {
+    $javaHome = $env:JAVA_HOME -replace '"', ''
+    $javaExe = Join-Path $javaHome "bin\java.exe"
+    if (!(Test-Path $javaExe)) {
+        throw "Java 21 or newer is required, but JAVA_HOME does not point to a valid Java install: $javaHome"
+    }
+    Assert-Java21 $javaExe "JAVA_HOME ($javaHome)"
+} else {
+    $javaCommand = Get-Command java -ErrorAction SilentlyContinue
+    if (!$javaCommand) {
+        throw "Java 21 or newer is required. Install Java 21+ or set JAVA_HOME to a Java 21+ install."
+    }
+    Assert-Java21 $javaCommand.Source "java on PATH ($($javaCommand.Source))"
 }
 
 if ($version -eq "latest") {

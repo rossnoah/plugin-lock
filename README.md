@@ -27,7 +27,8 @@
 
 ## Install
 
-`pl` requires Java 21 or newer.
+`pl` requires Java 21 or newer. On Windows, the launcher uses `JAVA_HOME`
+first when it is set, then falls back to `java` on `PATH`.
 
 macOS and Linux:
 

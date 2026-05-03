@@ -14,7 +14,7 @@ pl run</code></pre>
 
 <section class="install-section">
   <h2>Install</h2>
-  <p>Java 21 or newer is required.</p>
+  <p>Java 21 or newer is required. On Windows, <code>JAVA_HOME</code> is used first when it is set, then <code>java</code> on <code>PATH</code>.</p>
 
   <div class="install-commands">
     <div class="command-entry">

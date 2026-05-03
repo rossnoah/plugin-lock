@@ -14,13 +14,34 @@ fail() {
 command -v curl >/dev/null 2>&1 || fail "curl is required"
 command -v tar >/dev/null 2>&1 || fail "tar is required"
 
-if command -v java >/dev/null 2>&1; then
-  java_version="$(java -version 2>&1 | sed -n '1s/.*version "\([0-9][0-9]*\).*/\1/p')"
-  if [ -n "$java_version" ] && [ "$java_version" -lt 21 ]; then
-    fail "Java 21 or newer is required"
+java_major() {
+  "$1" -version 2>&1 | sed -n \
+    -e 's/.*version "1\.\([0-9][0-9]*\).*/\1/p' \
+    -e 's/.*version "\([0-9][0-9]*\).*/\1/p' \
+    -e 's/^[^ ][^ ]* \([0-9][0-9]*\)\([. ].*\)\{0,1\}$/\1/p' |
+    sed -n '1p'
+}
+
+check_java() {
+  java_cmd="$1"
+  java_source="$2"
+  java_version="$(java_major "$java_cmd")" || fail "Java 21 or newer is required, but $java_source could not be executed"
+  [ -n "$java_version" ] || fail "Java 21 or newer is required, but the version from $java_source could not be parsed"
+  [ "$java_version" -ge 21 ] || fail "Java 21 or newer is required; $java_source is Java $java_version"
+}
+
+if [ -n "${JAVA_HOME:-}" ]; then
+  if [ -x "$JAVA_HOME/jre/sh/java" ]; then
+    check_java "$JAVA_HOME/jre/sh/java" "JAVA_HOME ($JAVA_HOME)"
+  elif [ -x "$JAVA_HOME/bin/java" ]; then
+    check_java "$JAVA_HOME/bin/java" "JAVA_HOME ($JAVA_HOME)"
+  else
+    fail "Java 21 or newer is required, but JAVA_HOME does not point to a valid Java install: $JAVA_HOME"
   fi
+elif command -v java >/dev/null 2>&1; then
+  check_java "$(command -v java)" "java on PATH ($(command -v java))"
 else
-  fail "Java 21 or newer is required"
+  fail "Java 21 or newer is required. Install Java 21+ or set JAVA_HOME to a Java 21+ install."
 fi
 
 if [ "$version" = "latest" ]; then
