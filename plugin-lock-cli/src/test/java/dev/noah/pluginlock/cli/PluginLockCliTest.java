@@ -1,21 +1,25 @@
 package dev.noah.pluginlock.cli;
 
-import dev.noah.pluginlock.core.model.PluginMetadata;
+import dev.noah.pluginlock.cli.io.Terminal;
+import dev.noah.pluginlock.cli.output.CliOutput;
+import dev.noah.pluginlock.cli.selection.PluginSelection;
+import dev.noah.pluginlock.cli.selection.PluginSelectionController;
+import dev.noah.pluginlock.cli.selection.PluginSelectionStatus;
+import dev.noah.pluginlock.core.catalog.PluginCatalog;
 import dev.noah.pluginlock.core.model.PluginInspection;
-import dev.noah.pluginlock.core.model.PluginRequest;
-import dev.noah.pluginlock.core.model.PluginResolutionCheck;
+import dev.noah.pluginlock.core.model.PluginMetadata;
 import dev.noah.pluginlock.core.model.PluginVersion;
+import dev.noah.pluginlock.core.project.ProjectLocator;
+import dev.noah.pluginlock.core.project.ProjectPaths;
+import dev.noah.pluginlock.core.run.ServerRunCommand;
 import org.junit.jupiter.api.Test;
 import picocli.CommandLine;
 
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.InputStream;
-import java.io.PrintStream;
-import java.time.Duration;
 import java.nio.file.Path;
-import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.ArrayDeque;
 import java.util.List;
+import java.util.Queue;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
@@ -24,24 +28,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class PluginLockCliTest {
     @Test
     void metadataConfirmationSummaryIncludesFormattedDownloadCount() {
-        PluginMetadata metadata = new PluginMetadata();
-        metadata.setId("luckperms");
-        metadata.setProvider("modrinth");
-        metadata.setName("LuckPerms");
-        metadata.setAuthors(List.of("Luck"));
-        metadata.setDownloads(1234567);
-        metadata.setDescription("A permissions plugin");
+        TestTerminal terminal = new TestTerminal();
+        new CliOutput(terminal, false, false).printMetadata(metadata("modrinth", "luckperms", "LuckPerms", 1234567, "A permissions plugin"));
 
-        ByteArrayOutputStream output = new ByteArrayOutputStream();
-        PrintStream originalOut = System.out;
-        try {
-            System.setOut(new PrintStream(output));
-            PluginLockCli.printMetadata(metadata);
-        } finally {
-            System.setOut(originalOut);
-        }
-
-        String summary = output.toString();
+        String summary = terminal.output();
         assertTrue(summary.contains("LuckPerms (modrinth:luckperms)"));
         assertTrue(summary.contains("Authors: Luck"));
         assertTrue(summary.contains("Downloads: 1,234,567"));
@@ -50,46 +40,30 @@ class PluginLockCliTest {
 
     @Test
     void blankInstallActionInstallsDefaultProvider() {
-        InputStream originalIn = System.in;
-        try {
-            System.setIn(new ByteArrayInputStream("\n".getBytes(StandardCharsets.UTF_8)));
+        TestTerminal terminal = new TestTerminal("");
+        PluginSelection selection = selectionController(terminal).selectAndConfirmProvider(List.of(
+                metadata("modrinth", "viaversion"),
+                metadata("hangar", "ViaVersion")
+        ), "latest", null, null);
 
-            PluginLockCli.PluginSelection selection = PluginLockCli.selectAndConfirmProvider(List.of(
-                    metadata("modrinth", "viaversion"),
-                    metadata("hangar", "ViaVersion")
-            ), "latest");
-
-            assertEquals(PluginLockCli.PluginSelectionStatus.SELECTED, selection.status());
-            assertEquals("modrinth", selection.request().getProvider());
-            assertEquals("viaversion", selection.request().getId());
-        } finally {
-            System.setIn(originalIn);
-        }
+        assertEquals(PluginSelectionStatus.SELECTED, selection.status());
+        assertEquals("modrinth", selection.request().getProvider());
+        assertEquals("viaversion", selection.request().getId());
     }
 
     @Test
     void providerNumberSwitchesBeforeInstalling() {
-        InputStream originalIn = System.in;
-        ByteArrayOutputStream output = new ByteArrayOutputStream();
-        PrintStream originalOut = System.out;
-        try {
-            System.setIn(new ByteArrayInputStream("2\n\n".getBytes(StandardCharsets.UTF_8)));
-            System.setOut(new PrintStream(output));
+        TestTerminal terminal = new TestTerminal("2", "");
+        PluginSelection selection = selectionController(terminal).selectAndConfirmProvider(List.of(
+                metadata("modrinth", "viaversion"),
+                metadata("hangar", "ViaVersion")
+        ), "latest", null, null);
 
-            PluginLockCli.PluginSelection selection = PluginLockCli.selectAndConfirmProvider(List.of(
-                    metadata("modrinth", "viaversion"),
-                    metadata("hangar", "ViaVersion")
-            ), "latest");
+        assertEquals(PluginSelectionStatus.SELECTED, selection.status());
+        assertEquals("hangar", selection.request().getProvider());
+        assertEquals("ViaVersion", selection.request().getId());
 
-            assertEquals(PluginLockCli.PluginSelectionStatus.SELECTED, selection.status());
-            assertEquals("hangar", selection.request().getProvider());
-            assertEquals("ViaVersion", selection.request().getId());
-        } finally {
-            System.setIn(originalIn);
-            System.setOut(originalOut);
-        }
-
-        String prompt = output.toString();
+        String prompt = terminal.output();
         assertTrue(prompt.contains("Found 2 provider match(es) for viaversion:"));
         assertTrue(prompt.contains("1. modrinth:viaversion - viaversion"));
         assertTrue(prompt.contains("2. hangar:ViaVersion - ViaVersion (default)"));
@@ -98,79 +72,55 @@ class PluginLockCliTest {
 
     @Test
     void yesInstallsDefaultProvider() {
-        InputStream originalIn = System.in;
-        try {
-            System.setIn(new ByteArrayInputStream("y\n".getBytes(StandardCharsets.UTF_8)));
+        TestTerminal terminal = new TestTerminal("y");
+        PluginSelection selection = selectionController(terminal).selectAndConfirmProvider(List.of(
+                metadata("modrinth", "viaversion"),
+                metadata("hangar", "ViaVersion")
+        ), "latest", null, null);
 
-            PluginLockCli.PluginSelection selection = PluginLockCli.selectAndConfirmProvider(List.of(
-                    metadata("modrinth", "viaversion"),
-                    metadata("hangar", "ViaVersion")
-            ), "latest");
-
-            assertEquals(PluginLockCli.PluginSelectionStatus.SELECTED, selection.status());
-            assertEquals("modrinth", selection.request().getProvider());
-            assertEquals("viaversion", selection.request().getId());
-        } finally {
-            System.setIn(originalIn);
-        }
+        assertEquals(PluginSelectionStatus.SELECTED, selection.status());
+        assertEquals("modrinth", selection.request().getProvider());
+        assertEquals("viaversion", selection.request().getId());
     }
 
     @Test
     void noInstallActionSkipsPluginSelection() {
-        InputStream originalIn = System.in;
-        try {
-            System.setIn(new ByteArrayInputStream("n\n".getBytes(StandardCharsets.UTF_8)));
+        TestTerminal terminal = new TestTerminal("n");
+        PluginSelection selection = selectionController(terminal).selectAndConfirmProvider(List.of(
+                metadata("modrinth", "viaversion"),
+                metadata("hangar", "ViaVersion")
+        ), "latest", null, null);
 
-            PluginLockCli.PluginSelection selection = PluginLockCli.selectAndConfirmProvider(List.of(
-                    metadata("modrinth", "viaversion"),
-                    metadata("hangar", "ViaVersion")
-            ), "latest");
-
-            assertEquals(PluginLockCli.PluginSelectionStatus.EXITED, selection.status());
-        } finally {
-            System.setIn(originalIn);
-        }
+        assertEquals(PluginSelectionStatus.EXITED, selection.status());
     }
 
     @Test
     void exitInstallActionExitsCommand() {
-        InputStream originalIn = System.in;
-        try {
-            System.setIn(new ByteArrayInputStream("e\n".getBytes(StandardCharsets.UTF_8)));
+        TestTerminal terminal = new TestTerminal("e");
+        PluginSelection selection = selectionController(terminal).selectAndConfirmProvider(List.of(
+                metadata("modrinth", "viaversion"),
+                metadata("hangar", "ViaVersion")
+        ), "latest", null, null);
 
-            PluginLockCli.PluginSelection selection = PluginLockCli.selectAndConfirmProvider(List.of(
-                    metadata("modrinth", "viaversion"),
-                    metadata("hangar", "ViaVersion")
-            ), "latest");
-
-            assertEquals(PluginLockCli.PluginSelectionStatus.EXITED, selection.status());
-        } finally {
-            System.setIn(originalIn);
-        }
+        assertEquals(PluginSelectionStatus.EXITED, selection.status());
     }
 
     @Test
     void providerMatchesShowDefaultProviderBeforeActionPrompt() {
-        ByteArrayOutputStream output = new ByteArrayOutputStream();
-        PrintStream originalOut = System.out;
-        try {
-            System.setOut(new PrintStream(output));
-            PluginLockCli.printProviderMatches("viaversion", List.of(
-                    metadata("modrinth", "viaversion"),
-                    metadata("hangar", "ViaVersion")
-            ));
-        } finally {
-            System.setOut(originalOut);
-        }
+        TestTerminal terminal = new TestTerminal();
+        selectionController(terminal).printProviderMatches("viaversion", List.of(
+                metadata("modrinth", "viaversion"),
+                metadata("hangar", "ViaVersion")
+        ));
 
-        String summary = output.toString();
+        String summary = terminal.output();
         assertTrue(summary.contains("1. modrinth:viaversion - viaversion (default)"));
         assertTrue(summary.contains("2. hangar:ViaVersion - ViaVersion"));
     }
 
     @Test
     void suggestionsMessageListsProviderIdsAndNames() {
-        String message = PluginLockCli.suggestionsMessage(List.of(
+        String message = PluginSelectionController.suggestionsMessage(List.of(
                 metadata("hangar", "essentialsx-chat-module", "EssentialsX Chat"),
                 metadata("modrinth", "essentialsx", "EssentialsX")
         ));
@@ -182,24 +132,13 @@ class PluginLockCliTest {
 
     @Test
     void installPromptUsesYesNoConfirmation() {
-        InputStream originalIn = System.in;
-        ByteArrayOutputStream output = new ByteArrayOutputStream();
-        PrintStream originalOut = System.out;
-        try {
-            System.setIn(new ByteArrayInputStream("n\n".getBytes(StandardCharsets.UTF_8)));
-            System.setOut(new PrintStream(output));
+        TestTerminal terminal = new TestTerminal("n");
+        selectionController(terminal).selectAndConfirmProvider(List.of(
+                metadata("modrinth", "viaversion"),
+                metadata("hangar", "ViaVersion")
+        ), "latest", null, null);
 
-            PluginLockCli.selectAndConfirmProvider(List.of(
-                    metadata("modrinth", "viaversion"),
-                    metadata("hangar", "ViaVersion")
-            ), "latest");
-        } finally {
-            System.setIn(originalIn);
-            System.setOut(originalOut);
-        }
-
-        String prompt = output.toString();
-        assertTrue(prompt.contains("Install modrinth:viaversion [Y/n] or provider number:"));
+        assertTrue(terminal.output().contains("Install modrinth:viaversion [Y/n] or provider number:"));
     }
 
     @Test
@@ -208,7 +147,7 @@ class PluginLockCliTest {
         try {
             java.nio.file.Files.writeString(tempDir.resolve(dev.noah.pluginlock.core.PluginLockFiles.LOCK_FILE), "{}");
 
-            assertEquals(tempDir.toAbsolutePath().normalize(), PluginLockCli.detectProjectDir(tempDir));
+            assertEquals(tempDir.toAbsolutePath().normalize(), ProjectLocator.detectProjectDir(tempDir));
         } finally {
             java.nio.file.Files.deleteIfExists(tempDir.resolve(dev.noah.pluginlock.core.PluginLockFiles.LOCK_FILE));
             java.nio.file.Files.deleteIfExists(tempDir);
@@ -217,11 +156,10 @@ class PluginLockCliTest {
 
     @Test
     void pluginsDirResolvesRelativePathAgainstEffectiveProjectDir() {
-        PluginLockCli cli = new PluginLockCli();
-        cli.projectDir = Path.of("/tmp/plugin-lock-project");
+        ProjectPaths paths = new ProjectPaths(Path.of("/tmp/plugin-lock-project"));
 
-        assertEquals(Path.of("/tmp/plugin-lock-project/plugins"), cli.pluginsDir(Path.of("plugins")));
-        assertEquals(Path.of("/var/minecraft/plugins"), cli.pluginsDir(Path.of("/var/minecraft/plugins")));
+        assertEquals(Path.of("/tmp/plugin-lock-project/plugins"), paths.pluginsDir(Path.of("plugins")));
+        assertEquals(Path.of("/var/minecraft/plugins"), paths.pluginsDir(Path.of("/var/minecraft/plugins")));
     }
 
     @Test
@@ -238,42 +176,19 @@ class PluginLockCliTest {
 
     @Test
     void infoOutputSummarizesLongMinecraftVersionLists() {
-        PluginLockCli cli = new PluginLockCli(new ServerDownloads(java.net.http.HttpClient.newHttpClient()), ignored -> new dev.noah.pluginlock.core.model.PluginLock(),
-                new PluginLockCli.PluginInspector() {
-                    @Override
-                    public PluginInspection inspect(PluginRequest request, String loader) {
-                        PluginInspection inspection = new PluginInspection();
-                        inspection.setMetadata(metadata("modrinth", "luckperms", "LuckPerms"));
-                        PluginVersion version = new PluginVersion();
-                        version.setName("v5.5.17-bukkit");
-                        version.setFileName("LuckPerms-Bukkit-5.5.17.jar");
-                        version.setMinecraftVersions(List.of("1.8.9", "1.12.2", "1.21.11", "26.1.1", "26.1.2"));
-                        version.setLoaders(List.of("bukkit", "paper", "spigot"));
-                        inspection.setVersions(List.of(version));
-                        return inspection;
-                    }
+        PluginInspection inspection = new PluginInspection();
+        inspection.setMetadata(metadata("modrinth", "luckperms", "LuckPerms"));
+        PluginVersion version = new PluginVersion();
+        version.setName("v5.5.17-bukkit");
+        version.setFileName("LuckPerms-Bukkit-5.5.17.jar");
+        version.setMinecraftVersions(List.of("1.8.9", "1.12.2", "1.21.11", "26.1.1", "26.1.2"));
+        version.setLoaders(List.of("bukkit", "paper", "spigot"));
+        inspection.setVersions(List.of(version));
 
-                    @Override
-                    public PluginResolutionCheck check(PluginRequest request, String minecraftVersion, String loader) {
-                        return PluginResolutionCheck.failed("unused");
-                    }
-                });
+        TestTerminal terminal = new TestTerminal();
+        new CliOutput(terminal, false, false).info(List.of(inspection), "26.1.2", "paper");
 
-        ByteArrayOutputStream output = new ByteArrayOutputStream();
-        CommandLine commandLine = PluginLockCli.commandLine(cli);
-        commandLine.setOut(new java.io.PrintWriter(output, true));
-        commandLine.setErr(new java.io.PrintWriter(output, true));
-        PrintStream originalOut = System.out;
-        int exitCode;
-        try {
-            System.setOut(new PrintStream(output));
-            exitCode = commandLine.execute("info", "luckperms", "--provider", "modrinth", "--minecraft", "26.1.2", "--loader", "paper");
-        } finally {
-            System.setOut(originalOut);
-        }
-
-        String summary = output.toString();
-        assertEquals(0, exitCode);
+        String summary = terminal.output();
         assertTrue(summary.contains("OK v5.5.17-bukkit"));
         assertTrue(summary.contains("MC 1.8.9...26.1.2 (5)"));
         assertTrue(summary.contains("LuckPerms-Bukkit-5.5.17.jar"));
@@ -283,16 +198,16 @@ class PluginLockCliTest {
 
     @Test
     void runCommandNormalizesMemoryValues() {
-        assertEquals("2048M", PluginLockCli.RunCommand.normalizeMemory("2048"));
-        assertEquals("2048M", PluginLockCli.RunCommand.normalizeMemory("2048m"));
-        assertEquals("2G", PluginLockCli.RunCommand.normalizeMemory("2g"));
-        assertEquals("2G", PluginLockCli.RunCommand.normalizeMemory("2gb"));
-        assertEquals("512M", PluginLockCli.RunCommand.normalizeMemory("512mb"));
+        assertEquals("2048M", ServerRunCommand.normalizeMemory("2048"));
+        assertEquals("2048M", ServerRunCommand.normalizeMemory("2048m"));
+        assertEquals("2G", ServerRunCommand.normalizeMemory("2g"));
+        assertEquals("2G", ServerRunCommand.normalizeMemory("2gb"));
+        assertEquals("512M", ServerRunCommand.normalizeMemory("512mb"));
     }
 
     @Test
     void runCommandBuildsOptimizedServerCommand() {
-        List<String> command = PluginLockCli.RunCommand.serverCommand("java", "2048M", Path.of("server.jar"));
+        List<String> command = ServerRunCommand.build("java", "2048M", Path.of("server.jar"));
 
         assertEquals("java", command.getFirst());
         assertTrue(command.contains("-Xms2048M"));
@@ -326,15 +241,60 @@ class PluginLockCliTest {
         }
     }
 
+    private static PluginSelectionController selectionController(TestTerminal terminal) {
+        return new PluginSelectionController(new PluginCatalog(), terminal, new CliOutput(terminal, false, false));
+    }
+
     private static PluginMetadata metadata(String provider, String id) {
         return metadata(provider, id, id);
     }
 
     private static PluginMetadata metadata(String provider, String id, String name) {
+        return metadata(provider, id, name, 0, null);
+    }
+
+    private static PluginMetadata metadata(String provider, String id, String name, long downloads, String description) {
         PluginMetadata metadata = new PluginMetadata();
         metadata.setProvider(provider);
         metadata.setId(id);
         metadata.setName(name);
+        metadata.setDownloads(downloads);
+        metadata.setDescription(description);
+        metadata.setAuthors(List.of("Luck"));
         return metadata;
+    }
+
+    private static final class TestTerminal implements Terminal {
+        private final Queue<String> answers = new ArrayDeque<>();
+        private final StringBuilder output = new StringBuilder();
+
+        TestTerminal(String... answers) {
+            this.answers.addAll(List.of(answers));
+        }
+
+        @Override
+        public String readLine(String prompt) {
+            output.append(prompt);
+            return answers.isEmpty() ? "" : answers.remove();
+        }
+
+        @Override
+        public void print(String value) {
+            output.append(value);
+        }
+
+        @Override
+        public void println(String value) {
+            output.append(value).append(System.lineSeparator());
+        }
+
+        @Override
+        public void error(String value) {
+            output.append(value).append(System.lineSeparator());
+        }
+
+        String output() {
+            return output.toString();
+        }
     }
 }

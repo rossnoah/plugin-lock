@@ -1,4 +1,4 @@
-package dev.noah.pluginlock.cli;
+package dev.noah.pluginlock.core.server;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -21,7 +21,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
-final class ServerDownloads {
+public final class ServerDownloads {
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final URI PAPER_BASE = URI.create("https://fill.papermc.io/v3/");
     private static final URI PURPUR_BASE = URI.create("https://api.purpurmc.org/v2/purpur/");
@@ -30,17 +30,17 @@ final class ServerDownloads {
     private final URI purpurBase;
     private static final String USER_AGENT = "plugin-lock/0.1.0";
 
-    ServerDownloads(HttpClient httpClient) {
+    public ServerDownloads(HttpClient httpClient) {
         this(httpClient, PAPER_BASE, PURPUR_BASE);
     }
 
-    ServerDownloads(HttpClient httpClient, URI paperBase, URI purpurBase) {
+    public ServerDownloads(HttpClient httpClient, URI paperBase, URI purpurBase) {
         this.httpClient = httpClient;
         this.paperBase = paperBase;
         this.purpurBase = purpurBase;
     }
 
-    List<String> versions(String provider) throws IOException, InterruptedException {
+    public List<String> versions(String provider) throws IOException, InterruptedException {
         if ("paper".equalsIgnoreCase(provider)) {
             return paperVersions();
         }
@@ -50,7 +50,7 @@ final class ServerDownloads {
         throw new IllegalArgumentException("Unsupported server provider: " + provider);
     }
 
-    LockedServer latest(String provider, String minecraftVersion) throws IOException, InterruptedException {
+    public LockedServer latest(String provider, String minecraftVersion) throws IOException, InterruptedException {
         if ("paper".equalsIgnoreCase(provider)) {
             return latestPaper(minecraftVersion);
         }
@@ -60,11 +60,11 @@ final class ServerDownloads {
         throw new IllegalArgumentException("Unsupported server provider: " + provider);
     }
 
-    DownloadResult download(LockedServer server, Path targetDirectory) throws IOException, InterruptedException {
+    public DownloadResult download(LockedServer server, Path targetDirectory) throws IOException, InterruptedException {
         return download(server, targetDirectory, DownloadProgress.NONE);
     }
 
-    DownloadResult download(LockedServer server, Path targetDirectory, DownloadProgress progress) throws IOException, InterruptedException {
+    public DownloadResult download(LockedServer server, Path targetDirectory, DownloadProgress progress) throws IOException, InterruptedException {
         Files.createDirectories(targetDirectory);
         Path target = targetDirectory.resolve(server.getFileName());
         if (Files.exists(target) && hasExpectedHash(server, target)) {
@@ -85,7 +85,7 @@ final class ServerDownloads {
         }
     }
 
-    record DownloadResult(Path path, boolean downloaded) {
+    public record DownloadResult(Path path, boolean downloaded) {
     }
 
     private List<String> paperVersions() throws IOException, InterruptedException {
@@ -220,11 +220,11 @@ final class ServerDownloads {
         }
     }
 
-    static String pluginLoaderFor(String provider) {
+    public static String pluginLoaderFor(String provider) {
         return "purpur".equalsIgnoreCase(provider) ? "paper" : provider.toLowerCase(Locale.ROOT);
     }
 
-    static List<String> minecraftVersions(List<String> versions) {
+    public static List<String> minecraftVersions(List<String> versions) {
         return versions.stream()
                 .filter(SemanticVersion::isStable)
                 .distinct()

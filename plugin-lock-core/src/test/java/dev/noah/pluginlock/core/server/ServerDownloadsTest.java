@@ -1,4 +1,4 @@
-package dev.noah.pluginlock.cli;
+package dev.noah.pluginlock.core.server;
 
 import org.junit.jupiter.api.Test;
 

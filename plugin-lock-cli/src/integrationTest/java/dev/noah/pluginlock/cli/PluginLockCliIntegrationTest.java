@@ -4,6 +4,8 @@ import dev.noah.pluginlock.core.PluginLockFiles;
 import dev.noah.pluginlock.core.model.LockedPlugin;
 import dev.noah.pluginlock.core.model.PluginLock;
 import dev.noah.pluginlock.core.model.PluginManifest;
+import dev.noah.pluginlock.core.project.ProjectLocator;
+import dev.noah.pluginlock.core.server.ServerDownloads;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import picocli.CommandLine;
@@ -92,7 +94,7 @@ class PluginLockCliIntegrationTest {
         Path serverRoot = tempDir.resolve("server");
         Files.createDirectories(serverRoot.resolve("plugins"));
 
-        assertEquals(serverRoot.toAbsolutePath().normalize(), PluginLockCli.detectProjectDir(serverRoot));
+        assertEquals(serverRoot.toAbsolutePath().normalize(), ProjectLocator.detectProjectDir(serverRoot));
     }
 
     @Test
