@@ -56,6 +56,7 @@ class HangarProviderIntegrationTest {
                       "result":[%s]
                     }
                     """.formatted(projectJson("Owner", "Demo", "Demo Plugin")));
+            server.json("/projects/Owner/Demo/members?limit=100", membersJson("Owner", "Maintainer"));
 
             PluginMetadata metadata = new HangarProvider(HttpClient.newHttpClient(), server.baseUri())
                     .fetchMetadata("Demo");
@@ -247,6 +248,8 @@ class HangarProviderIntegrationTest {
                       ]
                     }
                     """.formatted(projectJson("pop4959", "Chunky", "Chunky"), projectJson("Other", "ChunkyBorder", "ChunkyBorder")));
+            server.json("/projects/pop4959/Chunky/members?limit=100", membersJson("pop4959", "Maintainer"));
+            server.json("/projects/Other/ChunkyBorder/members?limit=100", membersJson("Other"));
 
             java.util.List<PluginMetadata> results = new HangarProvider(HttpClient.newHttpClient(), server.baseUri())
                     .search("chunky", 2);
@@ -257,7 +260,7 @@ class HangarProviderIntegrationTest {
             assertEquals("Chunky", results.getFirst().getName());
             assertEquals("A demo plugin", results.getFirst().getDescription());
             assertEquals(321, results.getFirst().getDownloads());
-            assertEquals(java.util.List.of("Owner", "Maintainer"), results.getFirst().getAuthors());
+            assertEquals(java.util.List.of("pop4959", "Maintainer"), results.getFirst().getAuthors());
         }
     }
 
@@ -283,8 +286,19 @@ class HangarProviderIntegrationTest {
                   "namespace":{"owner":"%s","slug":"%s"},
                   "stats":{"downloads":321},
                   "description":"A demo plugin",
-                  "memberNames":["Owner","Maintainer"]
+                  "memberNames":null
                 }
                 """.formatted(name, owner, slug);
+    }
+
+    private static String membersJson(String... users) {
+        return """
+                {
+                  "pagination":{"count":%d,"limit":100,"offset":0},
+                  "result":[%s]
+                }
+                """.formatted(users.length, java.util.Arrays.stream(users)
+                .map(user -> "{\"user\":\"" + user + "\",\"userId\":1,\"roles\":[]}")
+                .collect(java.util.stream.Collectors.joining(",")));
     }
 }

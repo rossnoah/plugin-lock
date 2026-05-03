@@ -69,7 +69,7 @@ public final class HangarProvider {
         metadata.setName(project.path("name").asText(id));
         metadata.setDescription(project.path("description").asText(""));
         metadata.setDownloads(project.path("stats").path("downloads").asLong());
-        metadata.setAuthors(memberNames(project));
+        metadata.setAuthors(fetchAuthors(project));
         return metadata;
     }
 
@@ -83,7 +83,7 @@ public final class HangarProvider {
             metadata.setName(project.path("name").asText(metadata.getId()));
             metadata.setDescription(project.path("description").asText(""));
             metadata.setDownloads(project.path("stats").path("downloads").asLong());
-            metadata.setAuthors(memberNames(project));
+            metadata.setAuthors(fetchAuthors(project));
             results.add(metadata);
         }
         return results;
@@ -242,15 +242,13 @@ public final class HangarProvider {
                 + "; selected an older compatible release. Check for plugin-specific breaking changes.";
     }
 
-    private static List<String> memberNames(JsonNode project) {
-        JsonNode members = project.path("memberNames");
-        if (!members.isArray()) {
-            return List.of();
-        }
+    private List<String> fetchAuthors(JsonNode project) throws IOException, InterruptedException {
+        JsonNode members = get(projectPath(project) + "/members?limit=100").path("result");
         java.util.ArrayList<String> names = new java.util.ArrayList<>();
         for (JsonNode member : members) {
-            if (!member.asText("").isBlank()) {
-                names.add(member.asText());
+            String username = member.path("user").asText("");
+            if (!username.isBlank()) {
+                names.add(username);
             }
         }
         return names;
