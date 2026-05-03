@@ -21,6 +21,22 @@
 
 ---
 
+## Install
+
+`pl` requires Java 21 or newer.
+
+macOS and Linux:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/rossnoah/plugin-lock/main/scripts/install-pl | sh
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/rossnoah/plugin-lock/main/scripts/install-pl.ps1 | iex
+```
+
 ## Quick Start
 
 Open a terminal in your server folder:

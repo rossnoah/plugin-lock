@@ -32,7 +32,7 @@ import java.util.concurrent.Callable;
 @Command(
         name = "pl",
         mixinStandardHelpOptions = true,
-        version = "plugin-lock 0.1.0",
+        versionProvider = PluginLockVersionProvider.class,
         description = "Lock and install Minecraft server plugins.",
         subcommands = {
                 InitCommand.class,

@@ -1,0 +1,43 @@
+project:
+  name: plugin-lock
+  description: A package manager for Minecraft server plugins.
+  authors:
+    - Noah
+  license: UNLICENSED
+  copyright: Copyright (c) 2026 Noah
+  links:
+    homepage: https://github.com/rossnoah/plugin-lock
+
+release:
+  github:
+    owner: rossnoah
+    name: plugin-lock
+    overwrite: false
+    skipTag: true
+    update:
+      enabled: true
+      sections:
+        - ASSETS
+    releaseNotes:
+      enabled: true
+
+distributions:
+  pl:
+    type: JAVA_BINARY
+    stereotype: CLI
+    executable:
+      name: pl
+      windowsExtension: bat
+    java:
+      version: 21
+      mainClass: dev.noah.pluginlock.cli.PluginLockCli
+      multiProject: true
+    artifacts:
+      - path: plugin-lock-cli/build/distributions/pl-{{projectVersion}}.zip
+        transform: pl.zip
+      - path: plugin-lock-cli/build/distributions/pl-{{projectVersion}}.tar
+        transform: pl.tar
+
+files:
+  artifacts:
+    - path: plugin-lock-paper/build/libs/plugin-lock-paper-{{projectVersion}}.jar

@@ -15,6 +15,9 @@ import dev.noah.pluginlock.core.run.ServerRunCommand;
 import org.junit.jupiter.api.Test;
 import picocli.CommandLine;
 
+import java.io.ByteArrayOutputStream;
+import java.io.PrintWriter;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayDeque;
@@ -176,6 +179,16 @@ class PluginLockCliTest {
         assertTrue(commandLine.getSubcommands().containsKey("info"));
         assertTrue(commandLine.getSubcommands().containsKey("update"));
         assertTrue(commandLine.getSubcommands().containsKey("run"));
+    }
+
+    @Test
+    void versionCommandReportsPluginLockName() {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        CommandLine commandLine = PluginLockCli.commandLine(new PluginLockCli())
+                .setOut(new PrintWriter(output, true, StandardCharsets.UTF_8));
+
+        assertEquals(0, commandLine.execute("--version"));
+        assertTrue(output.toString(StandardCharsets.UTF_8).startsWith("plugin-lock "));
     }
 
     @Test

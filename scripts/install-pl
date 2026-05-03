@@ -1,0 +1,53 @@
+#!/usr/bin/env sh
+set -eu
+
+repo="${PLUGIN_LOCK_REPO:-rossnoah/plugin-lock}"
+version="${PLUGIN_LOCK_VERSION:-latest}"
+install_root="${PLUGIN_LOCK_HOME:-$HOME/.plugin-lock}"
+bin_dir="${PLUGIN_LOCK_BIN_DIR:-$HOME/.local/bin}"
+
+fail() {
+  printf 'plugin-lock install error: %s\n' "$1" >&2
+  exit 1
+}
+
+command -v curl >/dev/null 2>&1 || fail "curl is required"
+command -v tar >/dev/null 2>&1 || fail "tar is required"
+
+if command -v java >/dev/null 2>&1; then
+  java_version="$(java -version 2>&1 | sed -n '1s/.*version "\([0-9][0-9]*\).*/\1/p')"
+  if [ -n "$java_version" ] && [ "$java_version" -lt 21 ]; then
+    fail "Java 21 or newer is required"
+  fi
+else
+  fail "Java 21 or newer is required"
+fi
+
+if [ "$version" = "latest" ]; then
+  url="https://github.com/${repo}/releases/latest/download/pl.tar"
+else
+  case "$version" in
+    v*) tag="$version" ;;
+    *) tag="v$version" ;;
+  esac
+  url="https://github.com/${repo}/releases/download/${tag}/pl.tar"
+fi
+
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
+
+archive="$tmp_dir/pl.tar"
+
+printf 'Downloading %s\n' "$url"
+curl -fsSL "$url" -o "$archive"
+
+rm -rf "$install_root"
+mkdir -p "$install_root" "$bin_dir"
+tar -xf "$archive" -C "$install_root" --strip-components=1
+ln -sfn "$install_root/bin/pl" "$bin_dir/pl"
+
+printf 'Installed pl -> %s/pl\n' "$bin_dir"
+case ":$PATH:" in
+  *":$bin_dir:"*) ;;
+  *) printf 'Add %s to your PATH to run pl from any terminal.\n' "$bin_dir" ;;
+esac
