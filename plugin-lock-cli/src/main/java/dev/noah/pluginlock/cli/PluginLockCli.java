@@ -1,8 +1,10 @@
 package dev.noah.pluginlock.cli;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import dev.noah.pluginlock.core.DownloadProgress;
 import dev.noah.pluginlock.core.PluginInstaller;
+import dev.noah.pluginlock.core.PluginInstaller.InstallResult;
 import dev.noah.pluginlock.core.PluginLockFiles;
 import dev.noah.pluginlock.core.PluginResolver;
 import dev.noah.pluginlock.core.model.LockedPlugin;
@@ -232,7 +234,7 @@ public final class PluginLockCli implements Callable<Integer> {
                 .toList();
     }
 
-    PluginRequest selectPlugin(String provider, String id, String version, boolean assumeYes) throws Exception {
+    PluginSelection selectPlugin(String provider, String id, String version, boolean assumeYes) throws Exception {
         PluginSpec spec = PluginSpec.parse(id, provider, version);
         provider = spec.provider();
         id = spec.id();
@@ -240,13 +242,9 @@ public final class PluginLockCli implements Callable<Integer> {
         if (!"auto".equalsIgnoreCase(provider)) {
             if (!assumeYes) {
                 PluginMetadata metadata = fetchMetadata(provider, id);
-                printMetadata(metadata);
-                if (!confirm("Install this plugin? [y/N] ")) {
-                    return null;
-                }
-                id = metadata.getId();
+                return selectAndConfirmProvider(List.of(metadata), version);
             }
-            return new PluginRequest(id, provider.toLowerCase(Locale.ROOT), version);
+            return PluginSelection.selected(new PluginRequest(id, provider.toLowerCase(Locale.ROOT), version));
         }
 
         List<PluginMetadata> matches = findProviderMatches(id);
@@ -254,19 +252,33 @@ public final class PluginLockCli implements Callable<Integer> {
             throw new PluginNotFoundException("Modrinth or Hangar", id);
         }
         PluginMetadata selected = matches.get(0);
-        if (matches.size() > 1 || !assumeYes) {
+        if (matches.size() > 1 && assumeYes) {
             printProviderMatches(id, matches);
         }
-        if (matches.size() > 1 && !assumeYes) {
-            selected = confirmOrSelectProvider(matches);
-            if (selected == null) {
-                return null;
-            }
+        if (!assumeYes) {
+            printProviderMatches(id, matches);
+            return selectAndConfirmProvider(matches, version);
         }
-        if (!assumeYes && matches.size() == 1 && !confirm("Install this plugin? [Y/n] ")) {
-            return null;
+        return PluginSelection.selected(new PluginRequest(selected.getId(), selected.getProvider(), version));
+    }
+
+    enum PluginSelectionStatus {
+        SELECTED,
+        EXITED
+    }
+
+    record PluginSelection(PluginSelectionStatus status, PluginRequest request) {
+        static PluginSelection selected(PluginRequest request) {
+            return new PluginSelection(PluginSelectionStatus.SELECTED, request);
         }
-        return new PluginRequest(selected.getId(), selected.getProvider(), version);
+
+        static PluginSelection exited() {
+            return new PluginSelection(PluginSelectionStatus.EXITED, null);
+        }
+
+        boolean isExited() {
+            return status == PluginSelectionStatus.EXITED;
+        }
     }
 
     private record PluginSpec(String provider, String id, String version) {
@@ -305,7 +317,7 @@ public final class PluginLockCli implements Callable<Integer> {
         }
     }
 
-    private static void printProviderMatches(String id, List<PluginMetadata> matches) {
+    static void printProviderMatches(String id, List<PluginMetadata> matches) {
         System.out.println();
         System.out.println(Ansi.bold("Found " + matches.size() + " provider match(es) for " + id + ":"));
         for (int index = 0; index < matches.size(); index++) {
@@ -321,35 +333,72 @@ public final class PluginLockCli implements Callable<Integer> {
         System.out.println();
     }
 
-    private static PluginMetadata confirmOrSelectProvider(List<PluginMetadata> matches) {
-        PluginMetadata selected = matches.get(0);
-        if (confirm("Install " + selected.getProvider() + ":" + selected.getId() + "? " + Ansi.yellow("[Y/n]") + " ")) {
-            return selected;
+    static PluginSelection selectAndConfirmProvider(List<PluginMetadata> matches, String version) {
+        int selectedIndex = 0;
+        while (true) {
+            PluginMetadata selected = matches.get(selectedIndex);
+            printMetadata(selected);
+            printInstallOptions(matches, selectedIndex);
+            String answer = readConfirmation("Select option " + Ansi.yellow("[" + (selectedIndex + 1) + "]") + ": ");
+            if (answer.isBlank() || isInstallAnswer(answer)) {
+                return PluginSelection.selected(new PluginRequest(selected.getId(), selected.getProvider(), version));
+            }
+            if (isExitAnswer(answer)) {
+                return PluginSelection.exited();
+            }
+            Integer selectedOption = parseOption(answer);
+            if (selectedOption != null && selectedOption >= 1 && selectedOption <= matches.size()) {
+                if (selectedOption == selectedIndex + 1) {
+                    return PluginSelection.selected(new PluginRequest(selected.getId(), selected.getProvider(), version));
+                }
+                selectedIndex = selectedOption - 1;
+                continue;
+            }
+            if (selectedOption != null && selectedOption == matches.size() + 1) {
+                return PluginSelection.exited();
+            }
+            System.out.println(Ansi.yellow("Invalid selection; enter an option number, y to install, or n to exit."));
         }
-        int fallbackIndex = matches.size() > 1 ? 1 : 0;
-        selected = selectProvider(matches, fallbackIndex);
-        printMetadata(selected);
-        if (confirm("Install this plugin? " + Ansi.yellow("[Y/n]") + " ")) {
-            return selected;
-        }
-        return null;
     }
 
-    static PluginMetadata selectProvider(List<PluginMetadata> matches, int fallbackIndex) {
-        String answer = readConfirmation("Select provider " + Ansi.yellow("[" + (fallbackIndex + 1) + "]") + ": ");
-        if (answer.isBlank()) {
-            return matches.get(fallbackIndex);
+    static void printInstallOptions(List<PluginMetadata> matches, int selectedIndex) {
+        System.out.println("Options:");
+        for (int index = 0; index < matches.size(); index++) {
+            PluginMetadata metadata = matches.get(index);
+            boolean selected = index == selectedIndex;
+            String action = selected ? "Install " : "Switch to ";
+            String defaultLabel = selected ? Ansi.yellow(" (default)") : "";
+            System.out.println((index + 1) + ". " + action + metadata.getProvider() + ":" + metadata.getId()
+                    + defaultLabel);
         }
+        System.out.println((matches.size() + 1) + ". Exit (n)");
+    }
+
+    private static Integer parseOption(String answer) {
         try {
-            int selected = Integer.parseInt(answer);
-            if (selected >= 1 && selected <= matches.size()) {
-                return matches.get(selected - 1);
-            }
+            return Integer.parseInt(answer);
         } catch (NumberFormatException ignored) {
+            return null;
         }
-        PluginMetadata fallback = matches.get(fallbackIndex);
-        System.out.println(Ansi.yellow("Invalid selection; using " + fallback.getProvider() + ":" + fallback.getId()));
-        return fallback;
+    }
+
+    private static boolean isInstallAnswer(String answer) {
+        return "y".equalsIgnoreCase(answer)
+                || "yes".equalsIgnoreCase(answer)
+                || "i".equalsIgnoreCase(answer)
+                || "install".equalsIgnoreCase(answer);
+    }
+
+    private static boolean isExitAnswer(String answer) {
+        return "0".equals(answer)
+                || "n".equalsIgnoreCase(answer)
+                || "no".equalsIgnoreCase(answer)
+                || "e".equalsIgnoreCase(answer)
+                || "exit".equalsIgnoreCase(answer)
+                || "q".equalsIgnoreCase(answer)
+                || "quit".equalsIgnoreCase(answer)
+                || "x".equalsIgnoreCase(answer)
+                || "cancel".equalsIgnoreCase(answer);
     }
 
     private static boolean confirm(String prompt) {
@@ -412,7 +461,15 @@ public final class PluginLockCli implements Callable<Integer> {
         public Integer call() throws Exception {
             Path manifestPath = parent.resolve(PluginLockFiles.MANIFEST_FILE);
             if (Files.exists(manifestPath)) {
-                throw new IllegalStateException(PluginLockFiles.MANIFEST_FILE + " already exists");
+                PluginManifest manifest = PluginLockFiles.readManifest(manifestPath);
+                parent.output().success("init", "Already initialized " + manifest.getMinecraftVersion() + " " + manifest.getLoader(), Map.of(
+                        "manifest", PluginLockFiles.MANIFEST_FILE,
+                        "lockfile", Files.exists(parent.resolve(PluginLockFiles.LOCK_FILE)) ? PluginLockFiles.LOCK_FILE : "",
+                        "minecraftVersion", manifest.getMinecraftVersion(),
+                        "loader", manifest.getLoader(),
+                        "changed", false
+                ));
+                return 0;
             }
             LockedServer lockedServer = parent.initializeProject(server, minecraftVersion, yes);
             PluginManifest manifest = PluginLockFiles.readManifest(manifestPath);
@@ -507,17 +564,29 @@ public final class PluginLockCli implements Callable<Integer> {
         public Integer call() throws Exception {
             PluginManifest manifest = parent.readManifestOrDefault();
             ensurePluginsList(manifest);
-            PluginRequest request = parent.selectPlugin(provider, id, version, yes);
-            if (request == null) {
+            PluginSelection selection = parent.selectPlugin(provider, id, version, yes);
+            if (selection.isExited()) {
                 System.out.println("Cancelled");
                 return 1;
             }
-            addOrReplace(manifest, request);
+            PluginRequest request = selection.request();
+            RequestChange change = applyRequest(manifest, request);
+            if (!change.changed()) {
+                parent.output().success("add", "Already added " + request.getId(), Map.of(
+                        "id", request.getId(),
+                        "provider", request.getProvider(),
+                        "version", request.getVersion(),
+                        "changed", false
+                ));
+                return 0;
+            }
             parent.writeManifest(manifest);
-            parent.output().success("add", "Added " + request.getId(), Map.of(
+            parent.output().success("add", addMessage(change), Map.of(
                     "id", request.getId(),
                     "provider", request.getProvider(),
-                    "version", request.getVersion()
+                    "version", request.getVersion(),
+                    "previous", change.replaced().stream().map(PluginLockCli::requestId).toList(),
+                    "changed", true
             ));
             return 0;
         }
@@ -530,11 +599,22 @@ public final class PluginLockCli implements Callable<Integer> {
 
         @Override
         public Integer call() throws Exception {
+            Path lockfilePath = parent.resolve(PluginLockFiles.LOCK_FILE);
             PluginManifest manifest = PluginLockFiles.readManifest(parent.resolve(PluginLockFiles.MANIFEST_FILE));
-            PluginLock lock = parent.resolveAndWriteLock(manifest);
+            PluginLock lock = parent.resolveLock(manifest);
+            if (Files.exists(lockfilePath) && sameLock(PluginLockFiles.readLock(lockfilePath), lock)) {
+                parent.output().success("lock", "Already locked " + lock.getPlugins().size() + " plugin(s)", Map.of(
+                        "count", lock.getPlugins().size(),
+                        "plugins", lock.getPlugins().stream().map(LockedPlugin::getName).toList(),
+                        "changed", false
+                ));
+                return 0;
+            }
+            parent.writeLock(lock);
             parent.output().success("lock", "Locked " + lock.getPlugins().size() + " plugin(s)", Map.of(
                     "count", lock.getPlugins().size(),
-                    "plugins", lock.getPlugins().stream().map(LockedPlugin::getName).toList()
+                    "plugins", lock.getPlugins().stream().map(LockedPlugin::getName).toList(),
+                    "changed", true
             ));
             return 0;
         }
@@ -580,30 +660,111 @@ public final class PluginLockCli implements Callable<Integer> {
             if (!ids.isEmpty() || Files.exists(manifestPath)) {
                 PluginManifest manifest = parent.readManifestOrDefault();
                 ensurePluginsList(manifest);
+                List<PluginRequest> requested = new ArrayList<>();
+                List<RequestChange> requestChanges = new ArrayList<>();
+                boolean manifestChanged = false;
                 for (String id : ids) {
-                    PluginRequest request = parent.selectPlugin(provider, id, version, yes);
-                    if (request == null) {
+                    PluginSelection selection = parent.selectPlugin(provider, id, version, yes);
+                    if (selection.isExited()) {
                         System.out.println("Cancelled");
                         return 1;
                     }
-                    addOrReplace(manifest, request);
+                    PluginRequest request = selection.request();
+                    RequestChange change = applyRequest(manifest, request);
+                    if (change.changed()) {
+                        manifestChanged = true;
+                    }
+                    requestChanges.add(change);
+                    requested.add(request);
                 }
                 lock = parent.resolveLock(manifest);
-                parent.writeManifest(manifest);
-                parent.writeLock(lock);
+                boolean lockChanged = Files.notExists(lockfilePath) || !sameLock(PluginLockFiles.readLock(lockfilePath), lock);
+                if (manifestChanged) {
+                    parent.writeManifest(manifest);
+                }
+                if (lockChanged) {
+                    parent.writeLock(lock);
+                }
+                InstallResult result = new PluginInstaller().install(lock, resolvedPluginsDir, parent.downloadProgress());
+                parent.output().success("install", installMessage(lock, requested, result, requestChanges), installDetails(lock, requested, result, resolvedPluginsDir, manifestChanged, lockChanged, requestChanges));
             } else if (Files.exists(lockfilePath)) {
                 lock = PluginLockFiles.readLock(lockfilePath);
+                InstallResult result = new PluginInstaller().install(lock, resolvedPluginsDir, parent.downloadProgress());
+                parent.output().success("install", installMessage(lock, List.of(), result, List.of()), installDetails(lock, List.of(), result, resolvedPluginsDir, false, false, List.of()));
             } else {
                 throw new IllegalStateException("No server-lock.json or server-lock.lock.json found. Run `pl init` first.");
             }
-
-            new PluginInstaller().install(lock, resolvedPluginsDir, parent.downloadProgress());
-            parent.output().success("install", "Installed " + lock.getPlugins().size() + " plugin(s)", Map.of(
-                    "count", lock.getPlugins().size(),
-                    "pluginsDir", resolvedPluginsDir.toString(),
-                    "files", lock.getPlugins().stream().map(LockedPlugin::getFileName).toList()
-            ));
             return 0;
+        }
+
+        private static String installMessage(PluginLock lock, List<PluginRequest> requested, InstallResult result, List<RequestChange> changes) {
+            int lockedCount = lock.getPlugins().size();
+            String prefix = installChangePrefix(changes);
+            if (requested.isEmpty()) {
+                if (lockedCount == 0) {
+                    return "No locked plugins to install";
+                }
+                if (result.installedCount() == 0) {
+                    return "All " + lockedCount + " locked plugin(s) already installed";
+                }
+                if (result.alreadyInstalledCount() == 0) {
+                    return "Installed " + result.installedCount() + " locked plugin(s)";
+                }
+                return "Installed " + result.installedCount() + " locked plugin(s); "
+                        + result.alreadyInstalledCount() + " already installed";
+            }
+            List<String> requestedFiles = lockedFilesForRequests(lock, requested);
+            int requestedInstalledCount = countMatching(result.installedFiles(), requestedFiles);
+            int requestedAlreadyInstalledCount = countMatching(result.alreadyInstalledFiles(), requestedFiles);
+            if (requestedInstalledCount == 0 && requestedAlreadyInstalledCount > 0) {
+                return prefix + "Requested plugin(s) already installed; " + lockedCount + " locked plugin(s) checked";
+            }
+            if (requestedAlreadyInstalledCount == 0) {
+                return prefix + "Installed " + requestedInstalledCount + " requested plugin(s); "
+                        + lockedCount + " locked plugin(s) checked";
+            }
+            return prefix + "Installed " + requestedInstalledCount + " requested plugin(s); "
+                    + requestedAlreadyInstalledCount + " already installed; "
+                    + lockedCount + " locked plugin(s) checked";
+        }
+
+        private static Map<String, ?> installDetails(PluginLock lock, List<PluginRequest> requested, InstallResult result,
+                                                     Path resolvedPluginsDir, boolean manifestChanged, boolean lockChanged,
+                                                     List<RequestChange> changes) {
+            int lockedCount = lock.getPlugins().size();
+            int requestedCount = requested.size();
+            List<String> requestedFiles = lockedFilesForRequests(lock, requested);
+            Map<String, Object> details = new LinkedHashMap<>();
+            details.put("count", requested.isEmpty() ? lockedCount : requestedCount);
+            details.put("lockedCount", lockedCount);
+            details.put("requestedCount", requestedCount);
+            details.put("installedCount", result.installedCount());
+            details.put("alreadyInstalledCount", result.alreadyInstalledCount());
+            details.put("requestedInstalledCount", countMatching(result.installedFiles(), requestedFiles));
+            details.put("requestedAlreadyInstalledCount", countMatching(result.alreadyInstalledFiles(), requestedFiles));
+            details.put("changed", manifestChanged || lockChanged || result.installedCount() > 0);
+            details.put("manifestChanged", manifestChanged);
+            details.put("lockChanged", lockChanged);
+            details.put("pluginsDir", resolvedPluginsDir.toString());
+            details.put("requested", requested.stream().map(request -> request.getProvider() + ":" + request.getId()).toList());
+            details.put("requestChanges", changes.stream().map(RequestChange::label).toList());
+            details.put("providerSwitchCount", changes.stream().filter(RequestChange::providerSwitch).count());
+            details.put("duplicateCleanupCount", changes.stream().filter(RequestChange::duplicateCleanup).count());
+            details.put("installedFiles", result.installedFiles());
+            details.put("alreadyInstalledFiles", result.alreadyInstalledFiles());
+            details.put("files", lock.getPlugins().stream().map(LockedPlugin::getFileName).toList());
+            return details;
+        }
+
+        private static List<String> lockedFilesForRequests(PluginLock lock, List<PluginRequest> requested) {
+            return lock.getPlugins().stream()
+                    .filter(plugin -> requested.stream().anyMatch(request -> samePlugin(request.getProvider(), request.getId(), plugin.getProvider(), plugin.getId())))
+                    .map(LockedPlugin::getFileName)
+                    .toList();
+        }
+
+        private static int countMatching(List<String> values, List<String> candidates) {
+            return (int) values.stream().filter(value -> candidates.stream().anyMatch(candidate -> same(value, candidate))).count();
         }
     }
 
@@ -620,14 +781,24 @@ public final class PluginLockCli implements Callable<Integer> {
             Path resolvedPluginsDir = parent.pluginsDir(pluginsDir);
             PluginLock lock = PluginLockFiles.readLock(parent.resolve(PluginLockFiles.LOCK_FILE));
             Files.createDirectories(resolvedPluginsDir);
+            if (lock.getPlugins().isEmpty()) {
+                parent.output().success("clean-install", "No locked plugins to clean install", Map.of(
+                        "count", 0,
+                        "pluginsDir", resolvedPluginsDir.toString(),
+                        "changed", false
+                ));
+                return 0;
+            }
             for (dev.noah.pluginlock.core.model.LockedPlugin plugin : lock.getPlugins()) {
                 Files.deleteIfExists(resolvedPluginsDir.resolve(plugin.getFileName()));
             }
-            new PluginInstaller().install(lock, resolvedPluginsDir, parent.downloadProgress());
+            InstallResult result = new PluginInstaller().install(lock, resolvedPluginsDir, parent.downloadProgress());
             parent.output().success("clean-install", "Clean installed " + lock.getPlugins().size() + " plugin(s)", Map.of(
                     "count", lock.getPlugins().size(),
+                    "installedCount", result.installedCount(),
                     "pluginsDir", resolvedPluginsDir.toString(),
-                    "files", lock.getPlugins().stream().map(LockedPlugin::getFileName).toList()
+                    "files", lock.getPlugins().stream().map(LockedPlugin::getFileName).toList(),
+                    "changed", true
             ));
             return 0;
         }
@@ -829,20 +1000,33 @@ public final class PluginLockCli implements Callable<Integer> {
             PluginLock existing = Files.exists(parent.resolve(PluginLockFiles.LOCK_FILE))
                     ? PluginLockFiles.readLock(parent.resolve(PluginLockFiles.LOCK_FILE))
                     : null;
+            ObjectNode existingState = existing == null ? null : stableLock(existing);
             PluginLock resolved = parent.resolveLock(manifest);
+            List<String> selectedUpdateKeys = ids.isEmpty() ? List.of() : selectedPluginKeys(existing, resolved, ids);
             PluginLock updated = ids.isEmpty() || existing == null
                     ? resolved
                     : mergeSelectedUpdates(existing, resolved, ids);
+            int updatedPluginCount = ids.isEmpty() ? updated.getPlugins().size() : selectedUpdateKeys.size();
+            ServerDownloads.DownloadResult serverDownload = null;
             if (server) {
                 LockedServer lockedServer = latestServer(parent, manifest, existing);
-                parent.serverDownloads.download(lockedServer, parent.effectiveProjectDir(), parent.downloadProgress());
+                serverDownload = parent.serverDownloads.download(lockedServer, parent.effectiveProjectDir(), parent.downloadProgress());
                 updated.setServer(lockedServer);
             }
-            parent.writeLock(updated);
-            parent.output().success("update", updateMessage(ids, server, updated), Map.of(
-                    "count", updated.getPlugins().size(),
+            boolean lockChanged = existingState == null || !existingState.equals(stableLock(updated));
+            boolean serverDownloaded = serverDownload != null && serverDownload.downloaded();
+            if (lockChanged) {
+                parent.writeLock(updated);
+            }
+            parent.output().success("update", updateMessage(ids, server, updated, updatedPluginCount, lockChanged, serverDownloaded), Map.of(
+                    "count", updatedPluginCount,
+                    "lockedCount", updated.getPlugins().size(),
+                    "requestedCount", ids.size(),
                     "updated", ids,
                     "server", server,
+                    "changed", lockChanged || serverDownloaded,
+                    "lockChanged", lockChanged,
+                    "serverDownloaded", serverDownloaded,
                     "plugins", updated.getPlugins().stream().map(LockedPlugin::getId).toList()
             ));
             return 0;
@@ -857,6 +1041,26 @@ public final class PluginLockCli implements Callable<Integer> {
                 provider = DEFAULT_LOADER;
             }
             return parent.serverDownloads.latest(provider, manifest.getMinecraftVersion());
+        }
+
+        private static List<String> selectedPluginKeys(PluginLock existing, PluginLock resolved, List<String> ids) {
+            List<String> selectedKeys = new ArrayList<>();
+            if (existing != null) {
+                addSelectedPluginKeys(selectedKeys, existing.getPlugins(), ids);
+            }
+            addSelectedPluginKeys(selectedKeys, resolved.getPlugins(), ids);
+            return selectedKeys;
+        }
+
+        private static void addSelectedPluginKeys(List<String> selectedKeys, List<LockedPlugin> plugins, List<String> ids) {
+            for (LockedPlugin plugin : plugins) {
+                if (matchesLockedPlugin(ids, plugin)) {
+                    String key = pluginKey(plugin);
+                    if (!selectedKeys.contains(key)) {
+                        selectedKeys.add(key);
+                    }
+                }
+            }
         }
 
         private static PluginLock mergeSelectedUpdates(PluginLock existing, PluginLock resolved, List<String> ids) {
@@ -885,16 +1089,32 @@ public final class PluginLockCli implements Callable<Integer> {
             return blank(plugin.getProvider()).toLowerCase(Locale.ROOT) + ":" + blank(plugin.getId()).toLowerCase(Locale.ROOT);
         }
 
-        private static String updateMessage(List<String> ids, boolean server, PluginLock lock) {
+        private static String updateMessage(List<String> ids, boolean server, PluginLock lock, int updatedPluginCount,
+                                            boolean lockChanged, boolean serverDownloaded) {
+            boolean changed = lockChanged || serverDownloaded;
             if (server && ids.isEmpty()) {
-                return "Updated server and " + lock.getPlugins().size() + " plugin(s)";
+                return changed
+                        ? "Updated server and " + lock.getPlugins().size() + " plugin(s)"
+                        : "Server and " + lock.getPlugins().size() + " plugin(s) already up to date";
+            }
+            if (!ids.isEmpty() && updatedPluginCount == 0) {
+                String noMatch = "no locked plugins matched " + String.join(", ", ids);
+                if (server) {
+                    return changed ? "Updated server; " + noMatch : "Server already up to date; " + noMatch;
+                }
+                return "No locked plugins matched " + String.join(", ", ids);
+            }
+            if (!changed) {
+                return ids.isEmpty()
+                        ? lock.getPlugins().size() + " plugin(s) already up to date"
+                        : updatedPluginCount + " selected plugin(s) already up to date";
             }
             if (server) {
-                return "Updated server and " + ids.size() + " requested plugin(s)";
+                return "Updated server and " + updatedPluginCount + " selected plugin(s)";
             }
             return ids.isEmpty()
                     ? "Updated " + lock.getPlugins().size() + " plugin(s)"
-                    : "Updated " + ids.size() + " requested plugin(s)";
+                    : "Updated " + updatedPluginCount + " selected plugin(s)";
         }
 
         private static String blank(String value) {
@@ -966,26 +1186,50 @@ public final class PluginLockCli implements Callable<Integer> {
             }
 
             PluginManifest manifest = new PluginManifest();
+            List<PluginRequest> removedManifestRequests = List.of();
             if (Files.exists(manifestPath)) {
                 manifest = PluginLockFiles.readManifest(manifestPath);
                 ensurePluginsList(manifest);
-                manifest.getPlugins().removeIf(plugin -> matchesAny(ids, plugin.getId())
-                        || removedLockedPlugins.stream().anyMatch(removed -> removed.getProvider().equalsIgnoreCase(plugin.getProvider())
-                        && removed.getId().equalsIgnoreCase(plugin.getId())));
+                removedManifestRequests = manifest.getPlugins().stream()
+                        .filter(plugin -> matchesManifestPlugin(ids, removedLockedPlugins, plugin))
+                        .toList();
+                manifest.getPlugins().removeIf(plugin -> matchesManifestPlugin(ids, removedLockedPlugins, plugin));
                 parent.writeManifest(manifest);
             }
 
-            String message = removedLockedPlugins.isEmpty()
-                    ? "No locked plugins matched " + String.join(", ", ids)
-                    : "Removed " + removedLockedPlugins.size() + " plugin(s)";
+            String message = removeMessage(ids, removedLockedPlugins.size(), removedManifestRequests.size());
             parent.output().success("remove", message, Map.of(
                     "requested", ids,
                     "removed", removedLockedPlugins.stream().map(LockedPlugin::getId).toList(),
+                    "removedRequests", removedManifestRequests.stream().map(PluginRequest::getId).toList(),
+                    "lockRemovedCount", removedLockedPlugins.size(),
+                    "manifestRemovedCount", removedManifestRequests.size(),
                     "deletedFiles", deleted.stream().map(path -> path.getFileName().toString()).toList(),
                     "manifestRemaining", manifest.getPlugins().size(),
                     "lockRemaining", lock.getPlugins().size()
             ));
             return 0;
+        }
+
+        private static boolean matchesManifestPlugin(List<String> ids, List<LockedPlugin> removedLockedPlugins, PluginRequest plugin) {
+            return matchesAny(ids, plugin.getId())
+                    || removedLockedPlugins.stream().anyMatch(removed -> removed.getProvider().equalsIgnoreCase(plugin.getProvider())
+                    && removed.getId().equalsIgnoreCase(plugin.getId()));
+        }
+
+        private static String removeMessage(List<String> ids, int lockRemovedCount, int manifestRemovedCount) {
+            if (lockRemovedCount == 0 && manifestRemovedCount == 0) {
+                return "Already removed " + String.join(", ", ids);
+            }
+            if (lockRemovedCount == 0) {
+                return "Removed " + manifestRemovedCount + " plugin request(s)";
+            }
+            int manifestOnlyCount = Math.max(0, manifestRemovedCount - lockRemovedCount);
+            if (manifestOnlyCount > 0) {
+                return "Removed " + lockRemovedCount + " plugin(s) and "
+                        + manifestOnlyCount + " plugin request(s)";
+            }
+            return "Removed " + lockRemovedCount + " plugin(s)";
         }
     }
 
@@ -1311,14 +1555,129 @@ public final class PluginLockCli implements Callable<Integer> {
         }
     }
 
-    private static void addOrReplace(PluginManifest manifest, String id, String provider, String version) {
-        addOrReplace(manifest, new PluginRequest(id, provider, version));
+    private static boolean sameRequest(PluginRequest existing, PluginRequest request) {
+        return existing != null
+                && samePlugin(existing.getProvider(), existing.getId(), request.getProvider(), request.getId())
+                && same(existing.getVersion(), request.getVersion());
     }
 
-    private static void addOrReplace(PluginManifest manifest, PluginRequest request) {
-        manifest.getPlugins().removeIf(plugin -> request.getId().equals(plugin.getId())
-                && request.getProvider().equals(plugin.getProvider()));
+    private static RequestChange applyRequest(PluginManifest manifest, PluginRequest request) {
+        List<PluginRequest> matched = manifest.getPlugins().stream()
+                .filter(plugin -> sameLogicalPlugin(plugin, request))
+                .toList();
+        if (matched.size() == 1 && sameRequest(matched.getFirst(), request)) {
+            return new RequestChange(request, matched, false);
+        }
+        manifest.getPlugins().removeIf(plugin -> sameLogicalPlugin(plugin, request));
         manifest.getPlugins().add(request);
+        return new RequestChange(request, matched, true);
+    }
+
+    private static String addMessage(RequestChange change) {
+        if (change.added()) {
+            return "Added " + change.request().getId();
+        }
+        if (change.duplicateCleanup() && !change.providerSwitch()) {
+            return "Cleaned up duplicate " + change.request().getId();
+        }
+        if (change.providerSwitch()) {
+            return "Switched " + change.request().getId() + " to " + requestId(change.request());
+        }
+        return "Updated " + change.request().getId();
+    }
+
+    private static String installChangePrefix(List<RequestChange> changes) {
+        long providerSwitches = changes.stream().filter(RequestChange::providerSwitch).count();
+        if (providerSwitches > 0) {
+            return "Switched provider for " + providerSwitches + " plugin(s); ";
+        }
+        long duplicateCleanups = changes.stream().filter(RequestChange::duplicateCleanup).count();
+        if (duplicateCleanups > 0) {
+            return "Cleaned up " + duplicateCleanups + " duplicate plugin request(s); ";
+        }
+        return "";
+    }
+
+    private static boolean sameLock(PluginLock left, PluginLock right) {
+        return stableLock(left).equals(stableLock(right));
+    }
+
+    private static ObjectNode stableLock(PluginLock lock) {
+        ObjectNode node = JSON.valueToTree(lock);
+        node.remove("generatedAt");
+        return node;
+    }
+
+    private static boolean samePlugin(String leftProvider, String leftId, String rightProvider, String rightId) {
+        return same(leftProvider, rightProvider) && same(leftId, rightId);
+    }
+
+    private static boolean sameLogicalPlugin(PluginRequest left, PluginRequest right) {
+        return samePlugin(left.getProvider(), left.getId(), right.getProvider(), right.getId())
+                || samePluginId(left.getId(), right.getId());
+    }
+
+    private static boolean samePluginId(String left, String right) {
+        String leftKey = pluginIdKey(left);
+        return !leftKey.isBlank() && leftKey.equals(pluginIdKey(right));
+    }
+
+    private static String pluginIdKey(String value) {
+        String normalized = blank(value).trim().toLowerCase(Locale.ROOT);
+        StringBuilder key = new StringBuilder(normalized.length());
+        for (int index = 0; index < normalized.length(); index++) {
+            char character = normalized.charAt(index);
+            if (Character.isLetterOrDigit(character)) {
+                key.append(character);
+            }
+        }
+        return key.toString();
+    }
+
+    private static boolean same(String left, String right) {
+        return blank(left).equalsIgnoreCase(blank(right));
+    }
+
+    private static String blank(String value) {
+        return value == null ? "" : value;
+    }
+
+    private static String requestId(PluginRequest request) {
+        return request.getProvider() + ":" + request.getId();
+    }
+
+    private record RequestChange(PluginRequest request, List<PluginRequest> replaced, boolean changed) {
+        RequestChange {
+            replaced = List.copyOf(replaced);
+        }
+
+        boolean added() {
+            return replaced.isEmpty();
+        }
+
+        boolean providerSwitch() {
+            return replaced.stream().anyMatch(existing -> !same(existing.getProvider(), request.getProvider()));
+        }
+
+        boolean duplicateCleanup() {
+            return replaced.size() > 1;
+        }
+
+        String label() {
+            if (!changed) {
+                return "already-added";
+            }
+            if (added()) {
+                return "added";
+            }
+            if (providerSwitch()) {
+                return "provider-switched";
+            }
+            if (duplicateCleanup()) {
+                return "duplicate-cleaned";
+            }
+            return "updated";
+        }
     }
 
     private static final class FriendlyExecutionExceptionHandler implements CommandLine.IExecutionExceptionHandler {

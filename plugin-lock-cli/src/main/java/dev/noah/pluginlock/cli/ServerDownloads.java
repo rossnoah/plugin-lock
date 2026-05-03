@@ -60,15 +60,15 @@ final class ServerDownloads {
         throw new IllegalArgumentException("Unsupported server provider: " + provider);
     }
 
-    Path download(LockedServer server, Path targetDirectory) throws IOException, InterruptedException {
+    DownloadResult download(LockedServer server, Path targetDirectory) throws IOException, InterruptedException {
         return download(server, targetDirectory, DownloadProgress.NONE);
     }
 
-    Path download(LockedServer server, Path targetDirectory, DownloadProgress progress) throws IOException, InterruptedException {
+    DownloadResult download(LockedServer server, Path targetDirectory, DownloadProgress progress) throws IOException, InterruptedException {
         Files.createDirectories(targetDirectory);
         Path target = targetDirectory.resolve(server.getFileName());
         if (Files.exists(target) && hasExpectedHash(server, target)) {
-            return target;
+            return new DownloadResult(target, false);
         }
         Path temp = Files.createTempFile(targetDirectory, server.getFileName(), ".download");
         try {
@@ -79,10 +79,13 @@ final class ServerDownloads {
             }
             copyAndVerify(response.body(), temp, server, progress);
             Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-            return target;
+            return new DownloadResult(target, true);
         } finally {
             Files.deleteIfExists(temp);
         }
+    }
+
+    record DownloadResult(Path path, boolean downloaded) {
     }
 
     private List<String> paperVersions() throws IOException, InterruptedException {

@@ -167,24 +167,31 @@ class PluginLockCliIntegrationTest {
     }
 
     @Test
-    void initFailsCleanlyWhenManifestAlreadyExists() throws Exception {
+    void initReportsAlreadyInitializedWhenManifestExists() throws Exception {
         try (ApiServer server = apiServer()) {
             assertEquals(0, executeWithApi(server, tempDir, "init", "--yes"));
 
             CliResult result = executeCapturingWithApi(server, tempDir, "init", "--yes");
 
-            assertEquals(1, result.exitCode());
-            assertTrue(result.output().contains("Error: server-lock.json already exists"));
+            assertEquals(0, result.exitCode());
+            assertTrue(result.output().contains("Already initialized"));
             assertFalse(result.output().contains("Exception"));
         }
     }
 
     @Test
     void addCreatesManifestWhenMissingAndReplacesDuplicateProviderEntry() throws Exception {
-        assertEquals(0, execute(tempDir, "add", "luckperms", "--version", "latest", "--yes"));
-        assertEquals(0, execute(tempDir, "add", "luckperms", "--version", "v5", "--yes"));
+        CliResult add = executeCapturing(tempDir, "add", "luckperms", "--version", "latest", "--yes");
+        CliResult alreadyAdded = executeCapturing(tempDir, "add", "luckperms", "--version", "latest", "--yes");
+        CliResult update = executeCapturing(tempDir, "add", "luckperms", "--version", "v5", "--yes");
 
         PluginManifest manifest = PluginLockFiles.readManifest(tempDir.resolve(PluginLockFiles.MANIFEST_FILE));
+        assertEquals(0, add.exitCode());
+        assertEquals(0, alreadyAdded.exitCode());
+        assertEquals(0, update.exitCode());
+        assertTrue(add.output().contains("Added luckperms"));
+        assertTrue(alreadyAdded.output().contains("Already added luckperms"));
+        assertTrue(update.output().contains("Updated luckperms"));
         assertEquals(1, manifest.getPlugins().size());
         assertEquals("luckperms", manifest.getPlugins().getFirst().getId());
         assertEquals("v5", manifest.getPlugins().getFirst().getVersion());
@@ -221,6 +228,22 @@ class PluginLockCliIntegrationTest {
     }
 
     @Test
+    void addSwitchesProviderForSameNormalizedPluginId() throws Exception {
+        PluginManifest manifest = new PluginManifest();
+        manifest.setPlugins(java.util.List.of(new dev.noah.pluginlock.core.model.PluginRequest("viaversion", "modrinth", "latest")));
+        PluginLockFiles.writeManifest(tempDir.resolve(PluginLockFiles.MANIFEST_FILE), manifest);
+
+        CliResult result = executeCapturing(tempDir, "add", "hangar:ViaVersion", "--yes");
+
+        PluginManifest updated = PluginLockFiles.readManifest(tempDir.resolve(PluginLockFiles.MANIFEST_FILE));
+        assertEquals(0, result.exitCode());
+        assertTrue(result.output().contains("Switched ViaVersion to hangar:ViaVersion"));
+        assertEquals(1, updated.getPlugins().size());
+        assertEquals("hangar", updated.getPlugins().getFirst().getProvider());
+        assertEquals("ViaVersion", updated.getPlugins().getFirst().getId());
+    }
+
+    @Test
     void addRejectsBlankPluginIdFromProviderShorthand() {
         CliResult result = executeCapturing(tempDir, "add", "modrinth:", "--yes");
 
@@ -240,10 +263,128 @@ class PluginLockCliIntegrationTest {
         lock.setPlugins(java.util.List.of(lockedPlugin("local", "local.jar", source)));
         PluginLockFiles.writeLock(tempDir.resolve(PluginLockFiles.LOCK_FILE), lock);
 
-        int exitCode = execute(tempDir, "install", "--plugins-dir", tempDir.resolve("plugins").toString());
+        CliResult result = executeCapturing(tempDir, "install", "--plugins-dir", tempDir.resolve("plugins").toString());
 
-        assertEquals(0, exitCode);
+        assertEquals(0, result.exitCode());
+        assertTrue(result.output().contains("Installed 1 locked plugin(s)"));
         assertTrue(Files.exists(tempDir.resolve("plugins/local.jar")));
+    }
+
+    @Test
+    void installReportsLockedPluginsAlreadyInstalled() throws Exception {
+        Path pluginsDir = tempDir.resolve("plugins");
+        Files.createDirectories(pluginsDir);
+        Path installed = pluginsDir.resolve("local.jar");
+        Files.writeString(installed, "jar body");
+
+        PluginLock lock = new PluginLock();
+        lock.setMinecraftVersion("1.21.4");
+        lock.setLoader("paper");
+        lock.setPlugins(java.util.List.of(lockedPlugin("local", "local.jar", installed)));
+        PluginLockFiles.writeLock(tempDir.resolve(PluginLockFiles.LOCK_FILE), lock);
+
+        CliResult result = executeCapturing(tempDir, "install", "--plugins-dir", pluginsDir.toString());
+
+        assertEquals(0, result.exitCode());
+        assertTrue(result.output().contains("All 1 locked plugin(s) already installed"));
+    }
+
+    @Test
+    void installWithPluginReportsRequestedAndLockedCountsSeparately() throws Exception {
+        Path existingSource = tempDir.resolve("existing-source.jar");
+        Path requestedSource = tempDir.resolve("requested-source.jar");
+        Files.writeString(existingSource, "existing jar body");
+        Files.writeString(requestedSource, "requested jar body");
+
+        PluginManifest manifest = new PluginManifest();
+        manifest.setMinecraftVersion("1.21.4");
+        manifest.setLoader("paper");
+        manifest.setPlugins(java.util.List.of(new dev.noah.pluginlock.core.model.PluginRequest("existing", "modrinth", "latest")));
+        PluginLockFiles.writeManifest(tempDir.resolve(PluginLockFiles.MANIFEST_FILE), manifest);
+
+        PluginLockCli cli = new PluginLockCli(new ServerDownloads(HttpClient.newHttpClient()), ignored -> {
+            PluginLock lock = new PluginLock();
+            lock.setMinecraftVersion("1.21.4");
+            lock.setLoader("paper");
+            lock.setPlugins(java.util.List.of(
+                    lockedPlugin("existing", "existing.jar", existingSource),
+                    lockedPlugin("requested", "requested.jar", requestedSource)));
+            return lock;
+        });
+
+        CliResult result = executeCapturing(cli, tempDir, "", "--json", "install", "requested", "--provider", "modrinth", "--yes");
+
+        assertEquals(0, result.exitCode());
+        assertTrue(result.output().contains("Installed 1 requested plugin(s); 2 locked plugin(s) checked"));
+        assertTrue(result.output().contains("\"count\":1"));
+        assertTrue(result.output().contains("\"requestedCount\":1"));
+        assertTrue(result.output().contains("\"lockedCount\":2"));
+    }
+
+    @Test
+    void installWithPluginReportsRequestedPluginAlreadyInstalled() throws Exception {
+        Path pluginsDir = tempDir.resolve("plugins");
+        Files.createDirectories(pluginsDir);
+        Path requestedJar = pluginsDir.resolve("requested.jar");
+        Files.writeString(requestedJar, "requested jar body");
+
+        PluginManifest manifest = new PluginManifest();
+        manifest.setMinecraftVersion("1.21.4");
+        manifest.setLoader("paper");
+        manifest.setPlugins(java.util.List.of(new dev.noah.pluginlock.core.model.PluginRequest("requested", "modrinth", "latest")));
+        PluginLockFiles.writeManifest(tempDir.resolve(PluginLockFiles.MANIFEST_FILE), manifest);
+
+        PluginLockCli cli = new PluginLockCli(new ServerDownloads(HttpClient.newHttpClient()), ignored -> {
+            PluginLock lock = new PluginLock();
+            lock.setMinecraftVersion("1.21.4");
+            lock.setLoader("paper");
+            lock.setPlugins(java.util.List.of(lockedPlugin("requested", "requested.jar", requestedJar)));
+            return lock;
+        });
+
+        CliResult result = executeCapturing(cli, tempDir, "", "install", "requested", "--provider", "modrinth",
+                "--plugins-dir", pluginsDir.toString(), "--yes");
+
+        assertEquals(0, result.exitCode());
+        assertTrue(result.output().contains("Requested plugin(s) already installed; 1 locked plugin(s) checked"));
+    }
+
+    @Test
+    void installSwitchesProviderInsteadOfDuplicatingSamePlugin() throws Exception {
+        Path pluginsDir = tempDir.resolve("plugins");
+        Files.createDirectories(pluginsDir);
+        Path requestedJar = pluginsDir.resolve("ViaVersion.jar");
+        Files.writeString(requestedJar, "requested jar body");
+
+        PluginManifest manifest = new PluginManifest();
+        manifest.setMinecraftVersion("1.21.4");
+        manifest.setLoader("paper");
+        manifest.setPlugins(java.util.List.of(new dev.noah.pluginlock.core.model.PluginRequest("viaversion", "modrinth", "latest")));
+        PluginLockFiles.writeManifest(tempDir.resolve(PluginLockFiles.MANIFEST_FILE), manifest);
+
+        PluginLockCli cli = new PluginLockCli(new ServerDownloads(HttpClient.newHttpClient()), resolvedManifest -> {
+            assertEquals(1, resolvedManifest.getPlugins().size());
+            assertEquals("hangar", resolvedManifest.getPlugins().getFirst().getProvider());
+            assertEquals("ViaVersion", resolvedManifest.getPlugins().getFirst().getId());
+
+            PluginLock lock = new PluginLock();
+            lock.setMinecraftVersion("1.21.4");
+            lock.setLoader("paper");
+            lock.setPlugins(java.util.List.of(lockedPlugin("ViaVersion", "hangar", "ViaVersion.jar", requestedJar)));
+            return lock;
+        });
+
+        CliResult result = executeCapturing(cli, tempDir, "", "install", "hangar:ViaVersion",
+                "--plugins-dir", pluginsDir.toString(), "--yes");
+
+        PluginManifest updatedManifest = PluginLockFiles.readManifest(tempDir.resolve(PluginLockFiles.MANIFEST_FILE));
+        PluginLock updatedLock = PluginLockFiles.readLock(tempDir.resolve(PluginLockFiles.LOCK_FILE));
+        assertEquals(0, result.exitCode());
+        assertTrue(result.output().contains("Switched provider for 1 plugin(s); Requested plugin(s) already installed; 1 locked plugin(s) checked"));
+        assertEquals(1, updatedManifest.getPlugins().size());
+        assertEquals("hangar", updatedManifest.getPlugins().getFirst().getProvider());
+        assertEquals(1, updatedLock.getPlugins().size());
+        assertEquals("hangar", updatedLock.getPlugins().getFirst().getProvider());
     }
 
     @Test
@@ -296,6 +437,34 @@ class PluginLockCliIntegrationTest {
     }
 
     @Test
+    void lockReportsAlreadyLockedWhenLockfileMatchesManifestResolution() throws Exception {
+        PluginManifest manifest = new PluginManifest();
+        manifest.setMinecraftVersion("1.21.4");
+        manifest.setLoader("paper");
+        manifest.setPlugins(java.util.List.of(new dev.noah.pluginlock.core.model.PluginRequest("local", "modrinth", "latest")));
+        PluginLockFiles.writeManifest(tempDir.resolve(PluginLockFiles.MANIFEST_FILE), manifest);
+
+        PluginLock resolved = new PluginLock();
+        resolved.setMinecraftVersion("1.21.4");
+        resolved.setLoader("paper");
+        resolved.setPlugins(java.util.List.of(pluginRecord("local", "1.0.0")));
+        PluginLockFiles.writeLock(tempDir.resolve(PluginLockFiles.LOCK_FILE), resolved);
+
+        PluginLockCli cli = new PluginLockCli(new ServerDownloads(HttpClient.newHttpClient()), ignored -> {
+            PluginLock lock = new PluginLock();
+            lock.setMinecraftVersion("1.21.4");
+            lock.setLoader("paper");
+            lock.setPlugins(java.util.List.of(pluginRecord("local", "1.0.0")));
+            return lock;
+        });
+
+        CliResult result = executeCapturing(cli, tempDir, "", "lock");
+
+        assertEquals(0, result.exitCode());
+        assertTrue(result.output().contains("Already locked 1 plugin(s)"));
+    }
+
+    @Test
     void cleanInstallAliasReinstallsFromLockfileOnly() throws Exception {
         Path source = tempDir.resolve("source.jar");
         Files.writeString(source, "clean jar body");
@@ -313,6 +482,19 @@ class PluginLockCliIntegrationTest {
 
         assertEquals(0, exitCode);
         assertEquals("clean jar body", Files.readString(installed));
+    }
+
+    @Test
+    void cleanInstallReportsWhenThereAreNoLockedPlugins() throws Exception {
+        PluginLock lock = new PluginLock();
+        lock.setMinecraftVersion("1.21.4");
+        lock.setLoader("paper");
+        PluginLockFiles.writeLock(tempDir.resolve(PluginLockFiles.LOCK_FILE), lock);
+
+        CliResult result = executeCapturing(tempDir, "ci");
+
+        assertEquals(0, result.exitCode());
+        assertTrue(result.output().contains("No locked plugins to clean install"));
     }
 
     @Test
@@ -515,6 +697,34 @@ class PluginLockCliIntegrationTest {
     }
 
     @Test
+    void updateReportsAlreadyUpToDateWhenResolvedLockMatches() throws Exception {
+        PluginManifest manifest = new PluginManifest();
+        manifest.setMinecraftVersion("1.21.4");
+        manifest.setLoader("paper");
+        manifest.setPlugins(java.util.List.of(new dev.noah.pluginlock.core.model.PluginRequest("local", "modrinth", "latest")));
+        PluginLockFiles.writeManifest(tempDir.resolve(PluginLockFiles.MANIFEST_FILE), manifest);
+
+        PluginLock existing = new PluginLock();
+        existing.setMinecraftVersion("1.21.4");
+        existing.setLoader("paper");
+        existing.setPlugins(java.util.List.of(pluginRecord("local", "1.0.0")));
+        PluginLockFiles.writeLock(tempDir.resolve(PluginLockFiles.LOCK_FILE), existing);
+
+        PluginLockCli cli = new PluginLockCli(new ServerDownloads(HttpClient.newHttpClient()), ignored -> {
+            PluginLock lock = new PluginLock();
+            lock.setMinecraftVersion("1.21.4");
+            lock.setLoader("paper");
+            lock.setPlugins(java.util.List.of(pluginRecord("local", "1.0.0")));
+            return lock;
+        });
+
+        CliResult result = executeCapturing(cli, tempDir, "", "update");
+
+        assertEquals(0, result.exitCode());
+        assertTrue(result.output().contains("1 plugin(s) already up to date"));
+    }
+
+    @Test
     void updateSelectedPluginPreservesUnselectedLockedPlugin() throws Exception {
         PluginManifest manifest = new PluginManifest();
         manifest.setMinecraftVersion("1.21.4");
@@ -542,8 +752,35 @@ class PluginLockCliIntegrationTest {
         PluginLock updated = PluginLockFiles.readLock(tempDir.resolve(PluginLockFiles.LOCK_FILE));
 
         assertEquals(0, result.exitCode());
+        assertTrue(result.output().contains("Updated 1 selected plugin(s)"));
         assertEquals("2.0.0", updated.getPlugins().get(0).getVersionName());
         assertEquals("1.0.0", updated.getPlugins().get(1).getVersionName());
+    }
+
+    @Test
+    void updateSelectedPluginReportsWhenNothingMatches() throws Exception {
+        PluginManifest manifest = new PluginManifest();
+        manifest.setMinecraftVersion("1.21.4");
+        manifest.setLoader("paper");
+        manifest.setPlugins(java.util.List.of(new dev.noah.pluginlock.core.model.PluginRequest("local", "modrinth", "latest")));
+        PluginLockFiles.writeManifest(tempDir.resolve(PluginLockFiles.MANIFEST_FILE), manifest);
+
+        PluginLock existing = new PluginLock();
+        existing.setPlugins(java.util.List.of(pluginRecord("local", "1.0.0")));
+        PluginLockFiles.writeLock(tempDir.resolve(PluginLockFiles.LOCK_FILE), existing);
+
+        PluginLockCli cli = new PluginLockCli(new ServerDownloads(HttpClient.newHttpClient()), ignored -> {
+            PluginLock lock = new PluginLock();
+            lock.setMinecraftVersion("1.21.4");
+            lock.setLoader("paper");
+            lock.setPlugins(java.util.List.of(pluginRecord("local", "2.0.0")));
+            return lock;
+        });
+
+        CliResult result = executeCapturing(cli, tempDir, "", "update", "missing");
+
+        assertEquals(0, result.exitCode());
+        assertTrue(result.output().contains("No locked plugins matched missing"));
     }
 
     @Test
@@ -571,6 +808,38 @@ class PluginLockCliIntegrationTest {
             assertEquals("101", lock.getServer().getBuild());
             assertEquals("paper 1.21.4 jar", Files.readString(tempDir.resolve("paper-1.21.4-101.jar")));
             assertTrue(result.output().contains("Updated server and 0 plugin(s)"));
+        }
+    }
+
+    @Test
+    void updateServerReportsAlreadyUpToDateWhenJarAndLockMatchLatest() throws Exception {
+        PluginManifest manifest = new PluginManifest();
+        manifest.setMinecraftVersion("1.21.4");
+        manifest.setLoader("paper");
+        PluginLockFiles.writeManifest(tempDir.resolve(PluginLockFiles.MANIFEST_FILE), manifest);
+
+        dev.noah.pluginlock.core.model.LockedServer lockedServer = new dev.noah.pluginlock.core.model.LockedServer();
+        lockedServer.setProvider("paper");
+        lockedServer.setMinecraftVersion("1.21.4");
+        lockedServer.setBuild("101");
+        lockedServer.setFileName("paper-1.21.4-101.jar");
+        lockedServer.setSha256(sha256("paper 1.21.4 jar"));
+        lockedServer.setSize(100);
+        Files.writeString(tempDir.resolve("paper-1.21.4-101.jar"), "paper 1.21.4 jar");
+
+        try (ApiServer server = apiServer()) {
+            lockedServer.setDownloadUrl(server.uri("/downloads/paper-1.21.4.jar").toString());
+            PluginLock existing = new PluginLock();
+            existing.setMinecraftVersion("1.21.4");
+            existing.setLoader("paper");
+            existing.setServer(lockedServer);
+            PluginLockFiles.writeLock(tempDir.resolve(PluginLockFiles.LOCK_FILE), existing);
+
+            CliResult result = executeCapturingWithApi(server, tempDir, "update", "--server");
+
+            assertEquals(0, result.exitCode());
+            assertTrue(result.output().contains("Server and 0 plugin(s) already up to date"), result.output());
+            assertEquals(0, server.requestCount("/downloads/paper-1.21.4.jar"));
         }
     }
 
@@ -688,12 +957,29 @@ class PluginLockCliIntegrationTest {
                 new dev.noah.pluginlock.core.model.PluginRequest("remove-me", "hangar", "latest")));
         PluginLockFiles.writeManifest(tempDir.resolve(PluginLockFiles.MANIFEST_FILE), manifest);
 
-        int exitCode = execute(tempDir, "rm", "REMOVE-ME");
+        CliResult result = executeCapturing(tempDir, "rm", "REMOVE-ME");
 
         PluginManifest restored = PluginLockFiles.readManifest(tempDir.resolve(PluginLockFiles.MANIFEST_FILE));
-        assertEquals(0, exitCode);
+        assertEquals(0, result.exitCode());
+        assertTrue(result.output().contains("Removed 1 plugin request(s)"));
         assertEquals(1, restored.getPlugins().size());
         assertEquals("keep", restored.getPlugins().getFirst().getId());
+    }
+
+    @Test
+    void removeReportsAlreadyRemovedWhenNothingMatchesExistingProject() throws Exception {
+        PluginManifest manifest = new PluginManifest();
+        manifest.setPlugins(java.util.List.of(new dev.noah.pluginlock.core.model.PluginRequest("keep", "modrinth", "latest")));
+        PluginLockFiles.writeManifest(tempDir.resolve(PluginLockFiles.MANIFEST_FILE), manifest);
+
+        PluginLock lock = new PluginLock();
+        lock.setPlugins(java.util.List.of(pluginRecord("keep", "1.0.0")));
+        PluginLockFiles.writeLock(tempDir.resolve(PluginLockFiles.LOCK_FILE), lock);
+
+        CliResult result = executeCapturing(tempDir, "rm", "missing");
+
+        assertEquals(0, result.exitCode());
+        assertTrue(result.output().contains("Already removed missing"));
     }
 
     @Test
@@ -822,9 +1108,13 @@ class PluginLockCliIntegrationTest {
     }
 
     private static LockedPlugin lockedPlugin(String id, String fileName, Path source) throws Exception {
+        return lockedPlugin(id, "modrinth", fileName, source);
+    }
+
+    private static LockedPlugin lockedPlugin(String id, String provider, String fileName, Path source) throws Exception {
         LockedPlugin plugin = new LockedPlugin();
         plugin.setId(id);
-        plugin.setProvider("modrinth");
+        plugin.setProvider(provider);
         plugin.setName("Local");
         plugin.setFileName(fileName);
         plugin.setDownloadUrl(source.toUri().toString());

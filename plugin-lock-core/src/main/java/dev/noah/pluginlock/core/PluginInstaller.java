@@ -15,7 +15,9 @@ import java.nio.file.StandardCopyOption;
 import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.HexFormat;
+import java.util.List;
 
 public final class PluginInstaller {
     private final HttpClient httpClient;
@@ -28,22 +30,29 @@ public final class PluginInstaller {
         this.httpClient = httpClient;
     }
 
-    public void install(PluginLock lock, Path pluginsDirectory) throws IOException, InterruptedException {
-        install(lock, pluginsDirectory, DownloadProgress.NONE);
+    public InstallResult install(PluginLock lock, Path pluginsDirectory) throws IOException, InterruptedException {
+        return install(lock, pluginsDirectory, DownloadProgress.NONE);
     }
 
-    public void install(PluginLock lock, Path pluginsDirectory, DownloadProgress progress) throws IOException, InterruptedException {
+    public InstallResult install(PluginLock lock, Path pluginsDirectory, DownloadProgress progress) throws IOException, InterruptedException {
         Files.createDirectories(pluginsDirectory);
+        List<String> installedFiles = new ArrayList<>();
+        List<String> alreadyInstalledFiles = new ArrayList<>();
         for (LockedPlugin plugin : lock.getPlugins()) {
-            install(plugin, pluginsDirectory, progress);
+            if (install(plugin, pluginsDirectory, progress)) {
+                installedFiles.add(plugin.getFileName());
+            } else {
+                alreadyInstalledFiles.add(plugin.getFileName());
+            }
         }
+        return new InstallResult(installedFiles, alreadyInstalledFiles);
     }
 
-    private void install(LockedPlugin plugin, Path pluginsDirectory, DownloadProgress progress) throws IOException, InterruptedException {
+    private boolean install(LockedPlugin plugin, Path pluginsDirectory, DownloadProgress progress) throws IOException, InterruptedException {
         Path target = pluginsDirectory.resolve(plugin.getFileName());
         HashCheck hashCheck = hashCheck(plugin);
         if (Files.exists(target) && hashCheck.expectedHash().equalsIgnoreCase(hash(target, hashCheck.algorithm()))) {
-            return;
+            return false;
         }
 
         Path temp = Files.createTempFile(pluginsDirectory, plugin.getFileName(), ".download");
@@ -57,6 +66,7 @@ public final class PluginInstaller {
                 throw new IOException(hashCheck.algorithm() + " mismatch for " + plugin.getId());
             }
             Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            return true;
         } finally {
             Files.deleteIfExists(temp);
         }
@@ -127,5 +137,24 @@ public final class PluginInstaller {
     }
 
     private record HashCheck(String algorithm, String expectedHash) {
+    }
+
+    public record InstallResult(List<String> installedFiles, List<String> alreadyInstalledFiles) {
+        public InstallResult {
+            installedFiles = List.copyOf(installedFiles);
+            alreadyInstalledFiles = List.copyOf(alreadyInstalledFiles);
+        }
+
+        public int installedCount() {
+            return installedFiles.size();
+        }
+
+        public int alreadyInstalledCount() {
+            return alreadyInstalledFiles.size();
+        }
+
+        public int checkedCount() {
+            return installedCount() + alreadyInstalledCount();
+        }
     }
 }

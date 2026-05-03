@@ -30,9 +30,11 @@ class PluginInstallerIntegrationTest {
                     PluginInstaller.sha512(writeBytes("source.jar", jarBytes))));
 
             Path pluginsDir = tempDir.resolve("plugins");
-            new PluginInstaller(HttpClient.newHttpClient()).install(lock, pluginsDir);
+            PluginInstaller.InstallResult result = new PluginInstaller(HttpClient.newHttpClient()).install(lock, pluginsDir);
 
             assertEquals("fake jar contents", Files.readString(pluginsDir.resolve("fake.jar")));
+            assertEquals(1, result.installedCount());
+            assertEquals(0, result.alreadyInstalledCount());
         }
     }
 
@@ -48,10 +50,12 @@ class PluginInstallerIntegrationTest {
             PluginLock lock = lockWith(plugin(server.baseUri().resolve("download/fake.jar").toString(),
                     PluginInstaller.sha512(existing)));
 
-            new PluginInstaller(HttpClient.newHttpClient()).install(lock, pluginsDir);
+            PluginInstaller.InstallResult result = new PluginInstaller(HttpClient.newHttpClient()).install(lock, pluginsDir);
 
             assertEquals(0, server.requestCount());
             assertEquals("already present", Files.readString(existing));
+            assertEquals(0, result.installedCount());
+            assertEquals(1, result.alreadyInstalledCount());
         }
     }
 

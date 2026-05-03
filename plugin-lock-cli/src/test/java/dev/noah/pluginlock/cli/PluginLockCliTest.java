@@ -43,21 +43,120 @@ class PluginLockCliTest {
     }
 
     @Test
-    void blankProviderSelectionUsesRequestedFallback() {
+    void blankInstallActionInstallsDefaultProvider() {
         InputStream originalIn = System.in;
         try {
             System.setIn(new ByteArrayInputStream("\n".getBytes(StandardCharsets.UTF_8)));
 
-            PluginMetadata selected = PluginLockCli.selectProvider(List.of(
-                    metadata("modrinth", "perplayerkit"),
-                    metadata("hangar", "PerPlayerKit")
-            ), 1);
+            PluginLockCli.PluginSelection selection = PluginLockCli.selectAndConfirmProvider(List.of(
+                    metadata("modrinth", "viaversion"),
+                    metadata("hangar", "ViaVersion")
+            ), "latest");
 
-            assertEquals("hangar", selected.getProvider());
-            assertEquals("PerPlayerKit", selected.getId());
+            assertEquals(PluginLockCli.PluginSelectionStatus.SELECTED, selection.status());
+            assertEquals("modrinth", selection.request().getProvider());
+            assertEquals("viaversion", selection.request().getId());
         } finally {
             System.setIn(originalIn);
         }
+    }
+
+    @Test
+    void providerNumberSwitchesBeforeInstalling() {
+        InputStream originalIn = System.in;
+        try {
+            System.setIn(new ByteArrayInputStream("2\n\n".getBytes(StandardCharsets.UTF_8)));
+
+            PluginLockCli.PluginSelection selection = PluginLockCli.selectAndConfirmProvider(List.of(
+                    metadata("modrinth", "viaversion"),
+                    metadata("hangar", "ViaVersion")
+            ), "latest");
+
+            assertEquals(PluginLockCli.PluginSelectionStatus.SELECTED, selection.status());
+            assertEquals("hangar", selection.request().getProvider());
+            assertEquals("ViaVersion", selection.request().getId());
+        } finally {
+            System.setIn(originalIn);
+        }
+    }
+
+    @Test
+    void noInstallActionExitsCommand() {
+        InputStream originalIn = System.in;
+        try {
+            System.setIn(new ByteArrayInputStream("n\n".getBytes(StandardCharsets.UTF_8)));
+
+            PluginLockCli.PluginSelection selection = PluginLockCli.selectAndConfirmProvider(List.of(
+                    metadata("modrinth", "viaversion"),
+                    metadata("hangar", "ViaVersion")
+            ), "latest");
+
+            assertEquals(PluginLockCli.PluginSelectionStatus.EXITED, selection.status());
+        } finally {
+            System.setIn(originalIn);
+        }
+    }
+
+    @Test
+    void exitInstallActionExitsCommand() {
+        InputStream originalIn = System.in;
+        try {
+            System.setIn(new ByteArrayInputStream("e\n".getBytes(StandardCharsets.UTF_8)));
+
+            PluginLockCli.PluginSelection selection = PluginLockCli.selectAndConfirmProvider(List.of(
+                    metadata("modrinth", "viaversion"),
+                    metadata("hangar", "ViaVersion")
+            ), "latest");
+
+            assertEquals(PluginLockCli.PluginSelectionStatus.EXITED, selection.status());
+        } finally {
+            System.setIn(originalIn);
+        }
+    }
+
+    @Test
+    void providerMatchesShowDefaultProviderBeforeActionPrompt() {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        PrintStream originalOut = System.out;
+        try {
+            System.setOut(new PrintStream(output));
+            PluginLockCli.printProviderMatches("viaversion", List.of(
+                    metadata("modrinth", "viaversion"),
+                    metadata("hangar", "ViaVersion")
+            ));
+        } finally {
+            System.setOut(originalOut);
+        }
+
+        String summary = output.toString();
+        assertTrue(summary.contains("1. modrinth:viaversion - viaversion (default)"));
+        assertTrue(summary.contains("2. hangar:ViaVersion - ViaVersion"));
+    }
+
+    @Test
+    void installPromptShowsEveryActionAsNumberedOptions() {
+        InputStream originalIn = System.in;
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        PrintStream originalOut = System.out;
+        try {
+            System.setIn(new ByteArrayInputStream("n\n".getBytes(StandardCharsets.UTF_8)));
+            System.setOut(new PrintStream(output));
+
+            PluginLockCli.selectAndConfirmProvider(List.of(
+                    metadata("modrinth", "viaversion"),
+                    metadata("hangar", "ViaVersion")
+            ), "latest");
+        } finally {
+            System.setIn(originalIn);
+            System.setOut(originalOut);
+        }
+
+        String prompt = output.toString();
+        assertTrue(prompt.contains("Options:"));
+        assertTrue(prompt.contains("1. Install modrinth:viaversion (default)"));
+        assertTrue(prompt.contains("2. Switch to hangar:ViaVersion"));
+        assertTrue(prompt.contains("3. Exit (n)"));
+        assertTrue(prompt.contains("Select option [1]:"));
     }
 
     @Test
